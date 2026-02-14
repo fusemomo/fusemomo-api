@@ -21,7 +21,7 @@ test:
 # Clean the binary
 clean:
 	@echo "Cleaning..."
-	@rm -f main
+	@rm -f dist/main
 
 # Live Reload
 watch:

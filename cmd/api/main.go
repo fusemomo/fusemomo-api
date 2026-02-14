@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gofiber/contrib/v3/swaggo"
 	_ "github.com/joho/godotenv/autoload"
 )
 
@@ -42,6 +43,11 @@ func gracefulShutdown(fiberServer *server.FiberServer, done chan bool) {
 func main() {
 
 	server := server.New()
+	server.Get("/swagger/*", swaggo.HandlerDefault)
+	server.Get("/docs/*", swaggo.New(swaggo.Config{
+		URL:               "/swagger/doc.json",
+		OAuth2RedirectUrl: "/swagger/oauth2-redirect.html",
+	}))
 
 	server.RegisterFiberRoutes()
 

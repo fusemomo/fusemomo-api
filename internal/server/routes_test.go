@@ -1,21 +1,23 @@
 package server
 
 import (
-	"github.com/gofiber/fiber/v2"
+	v1 "fusemomo-api/internal/handlers/v1"
 	"io"
 	"net/http"
 	"testing"
+
+	"github.com/gofiber/fiber/v3"
 )
 
 func TestHandler(t *testing.T) {
 	// Create a Fiber app for testing
 	app := fiber.New()
-	// Inject the Fiber app into the server
-	s := &FiberServer{App: app}
+	// Create a Handler instance
+	h := v1.NewV1Handler()
 	// Define a route in the Fiber app
-	app.Get("/", s.HelloWorldHandler)
+	app.Get("/ping", h.PingPongHandler)
 	// Create a test HTTP request
-	req, err := http.NewRequest("GET", "/", nil)
+	req, err := http.NewRequest("GET", "/ping", nil)
 	if err != nil {
 		t.Fatalf("error creating request. Err: %v", err)
 	}
@@ -28,7 +30,7 @@ func TestHandler(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status OK; got %v", resp.Status)
 	}
-	expected := "{\"message\":\"Hello World\"}"
+	expected := "{\"message\":\"pong\"}"
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("error reading response body. Err: %v", err)

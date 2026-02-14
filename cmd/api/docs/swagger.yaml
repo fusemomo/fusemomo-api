@@ -1,0 +1,19 @@
+info:
+  contact: {}
+paths:
+  /ping:
+    get:
+      description: Returns a simple pong message to verify the server is running.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Ping the server
+      tags:
+      - Health
+swagger: "2.0"

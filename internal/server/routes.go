@@ -1,28 +1,25 @@
 package server
 
 import (
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
+	v1 "fusemomo-api/internal/handlers/v1"
+	"fusemomo-api/internal/middlewares"
 )
 
 func (s *FiberServer) RegisterFiberRoutes() {
-	// Apply CORS middleware
-	s.App.Use(cors.New(cors.Config{
-		AllowOrigins:     "*",
-		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
-		AllowHeaders:     "Accept,Authorization,Content-Type",
-		AllowCredentials: false, // credentials require explicit origins
-		MaxAge:           300,
-	}))
+	h := v1.NewV1Handler()
 
-	s.App.Get("/", s.HelloWorldHandler)
+	s.App.Use(middlewares.CORS())
+	s.App.Use(middlewares.RequestIDMiddleware())
+	s.App.Use(middlewares.LoggingMiddleware())
+
+	s.App.Get("/ping", h.PingPongHandler)
+	// s.App.Get("/health", h.DBHealthCheckHandler)
+
+	s.registerAPIv1Routes()
 
 }
 
-func (s *FiberServer) HelloWorldHandler(c *fiber.Ctx) error {
-	resp := fiber.Map{
-		"message": "Hello World",
-	}
+func (s *FiberServer) registerAPIv1Routes() {
+	// apiV1 := s.Group("/api/v1")
 
-	return c.JSON(resp)
 }

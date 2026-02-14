@@ -1,7 +1,9 @@
 package server
 
 import (
-	"github.com/gofiber/fiber/v2"
+	_ "fusemomo-api/cmd/api/docs"
+
+	"github.com/gofiber/fiber/v3"
 )
 
 type FiberServer struct {
@@ -15,6 +17,5 @@ func New() *FiberServer {
 			AppName:      "fusemomo-api",
 		}),
 	}
-
 	return server
 }

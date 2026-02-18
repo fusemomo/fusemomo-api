@@ -1,15 +1,43 @@
 package v1
 
 import (
+	"fusemomo-api/internal/utils"
+
 	"github.com/gofiber/fiber/v3"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Handler struct {
-	// Add dependencies here, e.g., DB *db.Database
+	DB *pgxpool.Pool
 }
 
-func NewV1Handler() *Handler {
-	return &Handler{}
+func NewV1Handler(db *pgxpool.Pool) *Handler {
+	return &Handler{
+		DB: db,
+	}
+}
+
+// DbHealthHandler godoc
+// @Summary      Check database health
+// @Description  Check if the database connection is alive.
+// @Tags         Health
+// @Produce      json
+// @Success      200  {object}  map[string]string
+// @Failure      503  {object}  utils.APIError
+// @Router       /health/db [get]
+func (h *Handler) DbHealthHandler(c fiber.Ctx) error {
+	if h.DB == nil {
+		return utils.NewAPIError(fiber.StatusServiceUnavailable, "Database is unreachable", "Database pool is not initialized")
+	}
+	err := h.DB.Ping(c.Context())
+	if err != nil {
+		return utils.NewAPIError(fiber.StatusServiceUnavailable, "Database is unreachable", err.Error())
+	}
+
+	return c.JSON(fiber.Map{
+		"status":  "up",
+		"message": "Database connection is healthy",
+	})
 }
 
 // PingPongHandler godoc

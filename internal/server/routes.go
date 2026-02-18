@@ -5,21 +5,21 @@ import (
 	"fusemomo-api/internal/middlewares"
 )
 
-func (s *FiberServer) RegisterFiberRoutes() {
-	h := v1.NewV1Handler()
+// RegisterFiberRoutes registers all application routes and global middleware.
+// Returns an error if any middleware cannot be initialised (e.g. invalid JWK).
+func (s *FiberServer) RegisterFiberRoutes() error {
+
+	h := v1.NewV1Handler(s.DB)
 
 	s.App.Use(middlewares.CORS())
 	s.App.Use(middlewares.RequestIDMiddleware())
 	s.App.Use(middlewares.LoggingMiddleware())
+	// s.App.Use(middlewares.SupabaseJWTMiddleware(s.DB))
 
 	s.App.Get("/ping", h.PingPongHandler)
-	// s.App.Get("/health", h.DBHealthCheckHandler)
+	s.App.Get("/health", h.DbHealthHandler)
 
-	s.registerAPIv1Routes()
+	// s.registerAPIv1Routes(h)
 
-}
-
-func (s *FiberServer) registerAPIv1Routes() {
-	// apiV1 := s.Group("/api/v1")
-
+	return nil
 }

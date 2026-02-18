@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"fusemomo-api/internal/db"
 	"fusemomo-api/internal/server"
 	"log"
 	"os"
@@ -41,15 +42,20 @@ func gracefulShutdown(fiberServer *server.FiberServer, done chan bool) {
 }
 
 func main() {
+	// Initialize Database Connection
+	pool := db.GetPool()
+	defer db.Close()
 
-	server := server.New()
+	server := server.New(pool)
 	server.Get("/swagger/*", swaggo.HandlerDefault)
 	server.Get("/docs/*", swaggo.New(swaggo.Config{
 		URL:               "/swagger/doc.json",
 		OAuth2RedirectUrl: "/swagger/oauth2-redirect.html",
 	}))
 
-	server.RegisterFiberRoutes()
+	if err := server.RegisterFiberRoutes(); err != nil {
+		log.Fatalf("Failed to register routes: %v", err)
+	}
 
 	// Create a done channel to signal when the shutdown is complete
 	done := make(chan bool, 1)

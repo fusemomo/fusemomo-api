@@ -19,7 +19,14 @@ func (s *FiberServer) RegisterFiberRoutes() error {
 	s.App.Get("/ping", h.PingPongHandler)
 	s.App.Get("/health", h.DbHealthHandler)
 
-	// s.registerAPIv1Routes(h)
+	s.registerAPIv1Routes(h)
 
 	return nil
+}
+
+func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
+	apiV1 := s.App.Group("/api/v1")
+
+	auth := apiV1.Group("/auth")
+	auth.Get("/login/:provider", h.LoginWithProvider)
 }

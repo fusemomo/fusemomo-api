@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -12,7 +12,8 @@ func GetEnv(key, fallback string) string {
 		return strings.TrimSpace(value)
 	}
 	if fallback == "" {
-		panic(fmt.Sprintf("required environment variable %s not set", key))
+		log.Printf("WARNING: required environment variable %s is not set", key)
+		return ""
 	}
 	return fallback
 }
@@ -35,6 +36,17 @@ func GetEnvAsFloat(key string, fallback float64) float64 {
 			return fallback
 		}
 		return f
+	}
+	return fallback
+}
+
+func GetEnvAsInt64(key string, fallback int64) int64 {
+	if value, ok := os.LookupEnv(key); ok {
+		i, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return fallback
+		}
+		return i
 	}
 	return fallback
 }

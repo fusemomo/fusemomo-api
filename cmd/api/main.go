@@ -3,17 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"fusemomo-api/internal/config"
 	"fusemomo-api/internal/db"
 	"fusemomo-api/internal/server"
 	"log"
-	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/gofiber/contrib/v3/swaggo"
-	_ "github.com/joho/godotenv/autoload"
 )
 
 func gracefulShutdown(fiberServer *server.FiberServer, done chan bool) {
@@ -60,16 +58,16 @@ func main() {
 	// Create a done channel to signal when the shutdown is complete
 	done := make(chan bool, 1)
 
+	// Run graceful shutdown in a separate goroutine
+	go gracefulShutdown(server, done)
+
+	log.Printf("Starting server on port %d...", config.Envs.API_PORT)
 	go func() {
-		port, _ := strconv.Atoi(os.Getenv("PORT"))
-		err := server.Listen(fmt.Sprintf(":%d", port))
+		err := server.Listen(fmt.Sprintf(":%d", config.Envs.API_PORT))
 		if err != nil {
 			panic(fmt.Sprintf("http server error: %s", err))
 		}
 	}()
-
-	// Run graceful shutdown in a separate goroutine
-	go gracefulShutdown(server, done)
 
 	// Wait for the graceful shutdown to complete
 	<-done

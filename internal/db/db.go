@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"sync"
+	"time"
 
 	"fusemomo-api/internal/config"
 
@@ -17,13 +18,16 @@ var (
 
 func GetPool() *pgxpool.Pool {
 	once.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
 		var err error
-		pool, err = pgxpool.New(context.Background(), config.Envs.DATABASE_URL)
+		pool, err = pgxpool.New(ctx, config.Envs.DATABASE_URL)
 		if err != nil {
 			log.Fatalf("Unable to connect to database: %v\n", err)
 		}
 
-		if err := pool.Ping(context.Background()); err != nil {
+		if err := pool.Ping(ctx); err != nil {
 			log.Fatalf("Unable to ping database: %v\n", err)
 		}
 

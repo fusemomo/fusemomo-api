@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"fmt"
+	"fusemomo-api/internal/config"
 	"fusemomo-api/internal/utils"
 
 	"github.com/gofiber/fiber/v3"
@@ -52,4 +54,33 @@ func (h *Handler) PingPongHandler(c fiber.Ctx) error {
 		"message": "pong",
 	}
 	return c.JSON(resp)
+}
+
+// LoginWithProvider redirects the user to Supabase's OAuth authorize endpoint
+// @Summary      Social Login
+// @Description  Redirects to Supabase OAuth for Google or GitHub
+// @Tags         Auth
+// @Param        provider path string true "OAuth Provider (google or github)"
+// @Param        redirect_to query string false "Redirect URL after login"
+// @Success      307 "Redirects to Supabase"
+// @Failure      400 {object} utils.APIError
+// @Router       /auth/login/{provider} [get]
+func (h *Handler) LoginWithProvider(c fiber.Ctx) error {
+	provider := c.Params("provider")
+	if provider != "google" && provider != "github" {
+		return utils.BadRequest("Invalid provider. Supported: google, github")
+	}
+
+	redirectTo := c.Query("redirect_to")
+	supabaseURL := config.Envs.SUPABASE_URL
+	if supabaseURL == "" {
+		return utils.InternalServerError("Supabase URL not configured")
+	}
+
+	authorizeURL := fmt.Sprintf("%s/auth/v1/authorize?provider=%s", supabaseURL, provider)
+	if redirectTo != "" {
+		authorizeURL += "&redirect_to=" + redirectTo
+	}
+
+	return c.Redirect().Status(fiber.StatusTemporaryRedirect).To(authorizeURL)
 }

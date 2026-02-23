@@ -8,9 +8,14 @@ type CreateAPIKeyRequest struct {
 }
 
 type CreateAPIKeyResponse struct {
+	ID        string     `json:"id"`
 	Key       string     `json:"key"` // Keep secret, full key
 	KeyPrefix string     `json:"key_prefix"`
 	Name      string     `json:"name"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
+}
+
+type DeleteAPIKeyRequest struct {
+	ID string `json:"id" validate:"required,uuid"`
 }

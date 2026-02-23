@@ -12,8 +12,12 @@ import (
 func TestHandler(t *testing.T) {
 	// Create a Fiber app for testing
 	app := fiber.New()
-	// Create a Handler instance
-	h := v1.NewV1Handler()
+	s := &FiberServer{
+		App: fiber.New(),
+		DB:  nil, // Dummy for route registration test
+	}
+
+	h := v1.NewV1Handler(s.DB)
 	// Define a route in the Fiber app
 	app.Get("/ping", h.PingPongHandler)
 	// Create a test HTTP request

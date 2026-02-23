@@ -160,6 +160,43 @@ func (h *Handler) DeleteAPIkeysForAgentsHandler(c fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+// SyncExpiredAPIKeysHandler godoc
+// @Summary Sync expired API keys
+// @Description Update the status of all expired API keys for the authenticated tenant
+// @Tags API_key
+// @Produce json
+// @Success      200  {object}  map[string]interface{}
+// @Failure      401  {object}  utils.APIError
+// @Failure      500  {object}  utils.APIError
+// @Router       /app/key/sync-expired [post]
+func (h *Handler) SyncExpiredAPIKeysHandler(c fiber.Ctx) error {
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Tenant ID not found in context")
+	}
+
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	query := `
+		UPDATE api_keys 
+		SET status = 'expired', updated_at = NOW() 
+		WHERE tenant_id = $1 AND status = 'active' AND expires_at < NOW()
+	`
+
+	result, err := h.DB.Exec(c.Context(), query, tenantID)
+	if err != nil {
+		return utils.InternalServerError("Failed to sync expired API keys", err.Error())
+	}
+
+	return c.JSON(fiber.Map{
+		"message":       "Expired API keys synchronized successfully",
+		"updated_count": result.RowsAffected(),
+	})
+}
+
 // DbHealthHandler godoc
 // @Summary      Check database health
 // @Description  Check if the database connection is alive.

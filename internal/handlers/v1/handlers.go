@@ -104,6 +104,7 @@ func (h *Handler) CreateAPIkeysForAgentsHandler(c fiber.Ctx) error {
 	}
 
 	resp := payload.CreateAPIKeyResponse{
+		ID:        id.String(),
 		Key:       fullKey,
 		KeyPrefix: keyPrefix,
 		Name:      apiKey.Name,
@@ -114,8 +115,49 @@ func (h *Handler) CreateAPIkeysForAgentsHandler(c fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(resp)
 }
 
+// DeleteAPIkeysForAgentsHandler godoc
+// @Summary Delete API keys
+// @Description Delete an existing API key for an AI agent
+// @Tags API_key
+// @Accept  json
+// @Produce json
+// @Param   req body payload.DeleteAPIKeyRequest true "Delete API Key Request"
+// @Success      204  "No Content"
+// @Failure      400  {object}  utils.APIError
+// @Failure      401  {object}  utils.APIError
+// @Failure      500  {object}  utils.APIError
+// @Router       /app/key/delete [post]
 func (h *Handler) DeleteAPIkeysForAgentsHandler(c fiber.Ctx) error {
-	return nil
+	var req payload.DeleteAPIKeyRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return utils.BadRequest("Invalid request payload", err.Error())
+	}
+
+	if err := utils.Validator.Struct(&req); err != nil {
+		return utils.BadRequest("Validation failed", err.Error())
+	}
+
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Tenant ID not found in context")
+	}
+
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	query := `DELETE FROM api_keys WHERE id = $1 AND tenant_id = $2`
+	result, err := h.DB.Exec(c.Context(), query, req.ID, tenantID)
+	if err != nil {
+		return utils.InternalServerError("Failed to delete API key", err.Error())
+	}
+
+	if result.RowsAffected() == 0 {
+		return utils.NotFound("API key not found or does not belong to your tenant")
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 // DbHealthHandler godoc

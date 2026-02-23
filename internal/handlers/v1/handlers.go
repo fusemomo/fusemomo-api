@@ -114,6 +114,10 @@ func (h *Handler) CreateAPIkeysForAgentsHandler(c fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(resp)
 }
 
+func (h *Handler) DeleteAPIkeysForAgentsHandler(c fiber.Ctx) error {
+	return nil
+}
+
 // DbHealthHandler godoc
 // @Summary      Check database health
 // @Description  Check if the database connection is alive.

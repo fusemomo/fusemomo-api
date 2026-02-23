@@ -175,6 +175,10 @@ func APIKeyMiddleware(db *pgxpool.Pool) fiber.Handler {
 
 		// Check expiration.
 		if apiKey.ExpiresAt != nil && time.Now().After(*apiKey.ExpiresAt) {
+			// Lazy update status to 'expired' asynchronously
+			go func(id string) {
+				db.Exec(context.Background(), `UPDATE api_keys SET status = 'expired', updated_at = NOW() WHERE id = $1`, id)
+			}(apiKey.ID)
 			return utils.Unauthorized("API key expired")
 		}
 

@@ -19,3 +19,13 @@ type CreateAPIKeyResponse struct {
 type DeleteAPIKeyRequest struct {
 	ID string `json:"id" validate:"required,uuid"`
 }
+
+type APIKeyInfo struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	KeyPrefix  string     `json:"key_prefix"`
+	Status     string     `json:"status"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}

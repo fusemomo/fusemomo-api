@@ -165,6 +165,56 @@ func (h *Handler) GetAPIKeysHandler(c fiber.Ctx) error {
 	return c.JSON(apiKeys)
 }
 
+// ListAllAPIKeysHandler godoc
+// @Summary List all API keys
+// @Description Fetch all API keys (active, expired, revoked) for the authenticated tenant
+// @Tags API_key
+// @Produce json
+// @Success      200  {array}   payload.APIKeyInfo
+// @Failure      401  {object}  utils.APIError
+// @Failure      500  {object}  utils.APIError
+// @Router       /app/key/all [get]
+func (h *Handler) ListAllAPIKeysHandler(c fiber.Ctx) error {
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Tenant ID not found in context")
+	}
+
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	query := `
+		SELECT id, name, key_prefix, status, last_used_at, expires_at, created_at 
+		FROM api_keys 
+		WHERE tenant_id = $1
+		ORDER BY created_at DESC
+	`
+
+	rows, err := h.DB.Query(c.Context(), query, tenantID)
+	if err != nil {
+		return utils.InternalServerError("Failed to fetch API keys", err.Error())
+	}
+	defer rows.Close()
+
+	var apiKeys []payload.APIKeyInfo
+	for rows.Next() {
+		var k payload.APIKeyInfo
+		err := rows.Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.Status, &k.LastUsedAt, &k.ExpiresAt, &k.CreatedAt)
+		if err != nil {
+			return utils.InternalServerError("Failed to scan API key", err.Error())
+		}
+		apiKeys = append(apiKeys, k)
+	}
+
+	if apiKeys == nil {
+		apiKeys = []payload.APIKeyInfo{}
+	}
+
+	return c.JSON(apiKeys)
+}
+
 // DeleteAPIkeysForAgentsHandler godoc
 // @Summary Delete API keys
 // @Description Delete an existing API key for an AI agent

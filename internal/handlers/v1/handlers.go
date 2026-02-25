@@ -219,22 +219,22 @@ func (h *Handler) ListAllAPIKeysHandler(c fiber.Ctx) error {
 // @Summary Delete API keys
 // @Description Delete an existing API key for an AI agent
 // @Tags API_key
-// @Accept  json
 // @Produce json
-// @Param   req body payload.DeleteAPIKeyRequest true "Delete API Key Request"
+// @Param   id path string true "API Key ID"
 // @Success      204  "No Content"
 // @Failure      400  {object}  utils.APIError
 // @Failure      401  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /app/key/delete [post]
+// @Router       /app/key/{id} [delete]
 func (h *Handler) DeleteAPIkeysForAgentsHandler(c fiber.Ctx) error {
-	var req payload.DeleteAPIKeyRequest
-	if err := c.Bind().JSON(&req); err != nil {
-		return utils.BadRequest("Invalid request payload", err.Error())
+	keyID := c.Params("id")
+	if keyID == "" {
+		return utils.BadRequest("API Key ID is required", "")
 	}
 
-	if err := utils.Validator.Struct(&req); err != nil {
-		return utils.BadRequest("Validation failed", err.Error())
+	// Validate UUID format
+	if _, err := uuid.Parse(keyID); err != nil {
+		return utils.BadRequest("Invalid API Key ID format", err.Error())
 	}
 
 	tenantIDStr := c.Locals("tenant_id")
@@ -248,7 +248,7 @@ func (h *Handler) DeleteAPIkeysForAgentsHandler(c fiber.Ctx) error {
 	}
 
 	query := `DELETE FROM api_keys WHERE id = $1 AND tenant_id = $2`
-	result, err := h.DB.Exec(c.Context(), query, req.ID, tenantID)
+	result, err := h.DB.Exec(c.Context(), query, keyID, tenantID)
 	if err != nil {
 		return utils.InternalServerError("Failed to delete API key", err.Error())
 	}
@@ -258,6 +258,60 @@ func (h *Handler) DeleteAPIkeysForAgentsHandler(c fiber.Ctx) error {
 	}
 
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// RevokeAPIKeyHandler godoc
+// @Summary Revoke an API key
+// @Description Update the status of an API key to 'revoked'
+// @Tags API_key
+// @Produce json
+// @Param   id path string true "API Key ID"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      400  {object}  utils.APIError
+// @Failure      401  {object}  utils.APIError
+// @Failure      404  {object}  utils.APIError
+// @Failure      500  {object}  utils.APIError
+// @Router       /dashboard/api-keys/{id} [delete]
+func (h *Handler) RevokeAPIKeyHandler(c fiber.Ctx) error {
+	keyID := c.Params("id")
+	if keyID == "" {
+		return utils.BadRequest("API Key ID is required", "")
+	}
+
+	// Validate UUID format
+	if _, err := uuid.Parse(keyID); err != nil {
+		return utils.BadRequest("Invalid API Key ID format", err.Error())
+	}
+
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Tenant ID not found in context")
+	}
+
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	query := `
+		UPDATE api_keys 
+		SET status = 'revoked', updated_at = NOW() 
+		WHERE id = $1 AND tenant_id = $2 AND status = 'active'
+	`
+
+	result, err := h.DB.Exec(c.Context(), query, keyID, tenantID)
+	if err != nil {
+		return utils.InternalServerError("Failed to revoke API key", err.Error())
+	}
+
+	if result.RowsAffected() == 0 {
+		return utils.NotFound("Active API key not found or does not belong to your tenant")
+	}
+
+	return c.JSON(fiber.Map{
+		"revoked":    true,
+		"api_key_id": keyID,
+	})
 }
 
 // SyncExpiredAPIKeysHandler godoc

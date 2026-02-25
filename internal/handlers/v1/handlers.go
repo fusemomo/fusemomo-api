@@ -762,3 +762,58 @@ func (h *Handler) GetAdminTenantsHandler(c fiber.Ctx) error {
 		Total:   totalCount,
 	})
 }
+
+// UpdateAdminTenantPlanHandler godoc
+// @Summary Manually change a tenant's plan
+// @Description Updates a tenant's plan tier and limits directly in the database (admin override)
+// @Tags Admin
+// @Accept json
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Param request body payload.UpdateTenantPlanRequest true "Plan Update Request"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} utils.APIError
+// @Failure 401 {object} utils.APIError
+// @Failure 404 {object} utils.APIError
+// @Failure 500 {object} utils.APIError
+// @Router /admin/tenants/{id}/plan [patch]
+func (h *Handler) UpdateAdminTenantPlanHandler(c fiber.Ctx) error {
+	tenantIDParam := c.Params("id")
+	if tenantIDParam == "" {
+		return utils.BadRequest("Tenant ID is required", "")
+	}
+
+	if _, err := uuid.Parse(tenantIDParam); err != nil {
+		return utils.BadRequest("Invalid Tenant ID format", err.Error())
+	}
+
+	var req payload.UpdateTenantPlanRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return utils.BadRequest("Invalid request payload", err.Error())
+	}
+
+	if err := utils.Validator.Struct(&req); err != nil {
+		return utils.BadRequest("Validation failed", err.Error())
+	}
+
+	query := `
+		UPDATE tenants
+		SET plan = $1, monthly_resolution_limit = $2, updated_at = NOW()
+		WHERE id = $3
+	`
+
+	result, err := h.DB.Exec(c.Context(), query, req.Plan, req.MonthlyResolutionLimit, tenantIDParam)
+	if err != nil {
+		return utils.InternalServerError("Failed to update tenant plan", err.Error())
+	}
+
+	if result.RowsAffected() == 0 {
+		return utils.NotFound("Tenant not found")
+	}
+
+	return c.JSON(fiber.Map{
+		"updated":   true,
+		"tenant_id": tenantIDParam,
+		"new_plan":  req.Plan,
+	})
+}

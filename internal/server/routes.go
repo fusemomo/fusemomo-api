@@ -41,6 +41,7 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	apiKey.Get("", h.GetAPIKeysHandler)
 	apiKey.Get("/all", h.ListAllAPIKeysHandler)
 	apiKey.Post("/create", h.CreateAPIkeysForAgentsHandler)
-	apiKey.Post("/delete", h.DeleteAPIkeysForAgentsHandler)
+	apiKey.Delete("/:id", h.DeleteAPIkeysForAgentsHandler)
 	apiKey.Post("/sync-expired", h.SyncExpiredAPIKeysHandler)
+	apiKey.Delete("/:id", h.RevokeAPIKeyHandler)
 }

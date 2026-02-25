@@ -817,3 +817,69 @@ func (h *Handler) UpdateAdminTenantPlanHandler(c fiber.Ctx) error {
 		"new_plan":  req.Plan,
 	})
 }
+
+// GetGlobalTenantUsagesHandler godoc
+// @Summary Global usage stats
+// @Description Aggregates usage metrics across all tenants for platform monitoring
+// @Tags Admin
+// @Produce json
+// @Success 200 {object} payload.GlobalUsageResponse
+// @Failure 401 {object} utils.APIError
+// @Failure 403 {object} utils.APIError
+// @Failure 500 {object} utils.APIError
+// @Router /admin/usage/global [get]
+func (h *Handler) GetGlobalTenantUsagesHandler(c fiber.Ctx) error {
+	var resp payload.GlobalUsageResponse
+	resp.ByPlan = make(map[string]int)
+
+	ctx := c.Context()
+	now := time.Now().UTC()
+	currentYear := now.Year()
+	currentMonth := int(now.Month())
+
+	// 1. Total Tenants
+	if err := h.DB.QueryRow(ctx, "SELECT COUNT(id) FROM tenants").Scan(&resp.TotalTenants); err != nil {
+		return utils.InternalServerError("Failed to count total tenants", err.Error())
+	}
+
+	// 2. Total Entities
+	if err := h.DB.QueryRow(ctx, "SELECT COUNT(id) FROM entities").Scan(&resp.TotalEntities); err != nil {
+		return utils.InternalServerError("Failed to count total entities", err.Error())
+	}
+
+	// 3. Total Interactions (All time)
+	var totalInteractions *int
+	if err := h.DB.QueryRow(ctx, "SELECT SUM(interaction_count) FROM usage_logs").Scan(&totalInteractions); err != nil {
+		return utils.InternalServerError("Failed to sum interactions", err.Error())
+	}
+	if totalInteractions != nil {
+		resp.TotalInteractions = *totalInteractions
+	}
+
+	// 4. Total Resolutions (This Month)
+	var totalResolutions *int
+	if err := h.DB.QueryRow(ctx, "SELECT SUM(resolution_count) FROM usage_logs WHERE period_year = $1 AND period_month = $2", currentYear, currentMonth).Scan(&totalResolutions); err != nil {
+		return utils.InternalServerError("Failed to sum daily resolutions", err.Error())
+	}
+	if totalResolutions != nil {
+		resp.TotalResolutionsThisMonth = *totalResolutions
+	}
+
+	// 5. By Plan Grouping
+	rows, err := h.DB.Query(ctx, "SELECT plan, COUNT(id) FROM tenants GROUP BY plan")
+	if err != nil {
+		return utils.InternalServerError("Failed to group tenants by plan", err.Error())
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var plan string
+		var count int
+		if err := rows.Scan(&plan, &count); err != nil {
+			return utils.InternalServerError("Failed to scan plan groups", err.Error())
+		}
+		resp.ByPlan[plan] = count
+	}
+
+	return c.JSON(resp)
+}

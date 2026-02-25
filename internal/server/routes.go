@@ -51,4 +51,5 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	apiKey.Delete("/:id", h.RevokeAPIKeyHandler)
 
 	dashboard.Get("/usage", h.GetMonthlyUsageHandler)
+	dashboard.Get("/usage/history", h.GetHistoricalUsageHandler)
 }

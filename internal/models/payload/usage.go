@@ -10,3 +10,13 @@ type UsageResponse struct {
 	Plan                string  `json:"plan"`
 	PercentageUsed      float64 `json:"percentage_used"`
 }
+
+type UsageMonth struct {
+	Period       string `json:"period"`
+	Resolutions  int    `json:"resolutions"`
+	Interactions int    `json:"interactions"`
+}
+
+type UsageHistoryResponse struct {
+	Months []UsageMonth `json:"months"`
+}

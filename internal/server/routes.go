@@ -64,4 +64,5 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	admin.Get("/tenants", h.GetAdminTenantsHandler)
 	admin.Patch("/tenants/:id/plan", h.UpdateAdminTenantPlanHandler)
 	admin.Get("/usage/global", h.GetGlobalTenantUsagesHandler)
+	admin.Delete("/tenants/:id", h.DeleteTenantHandler)
 }

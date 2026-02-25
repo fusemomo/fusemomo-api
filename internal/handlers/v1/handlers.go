@@ -883,3 +883,45 @@ func (h *Handler) GetGlobalTenantUsagesHandler(c fiber.Ctx) error {
 
 	return c.JSON(resp)
 }
+
+// DeleteTenantHandler godoc
+// @Summary Delete a tenant
+// @Description Hard delete a tenant and all its associated data (admin only)
+// @Tags Admin
+// @Param id path string true "Tenant ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} utils.APIError
+// @Failure 401 {object} utils.APIError
+// @Failure 403 {object} utils.APIError
+// @Failure 404 {object} utils.APIError
+// @Failure 500 {object} utils.APIError
+// @Router /admin/tenants/{id} [delete]
+func (h *Handler) DeleteTenantHandler(c fiber.Ctx) error {
+	tenantID := c.Params("id")
+	if tenantID == "" {
+		return utils.BadRequest("Tenant ID is required", "")
+	}
+
+	if _, err := uuid.Parse(tenantID); err != nil {
+		return utils.BadRequest("Invalid Tenant ID format", err.Error())
+	}
+
+	query := `
+		DELETE FROM tenants
+		WHERE id = $1
+	`
+
+	result, err := h.DB.Exec(c.Context(), query, tenantID)
+	if err != nil {
+		return utils.InternalServerError("Failed to delete tenant", err.Error())
+	}
+
+	if result.RowsAffected() == 0 {
+		return utils.NotFound("Tenant not found")
+	}
+
+	return c.JSON(fiber.Map{
+		"deleted":   true,
+		"tenant_id": tenantID,
+	})
+}

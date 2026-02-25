@@ -39,12 +39,14 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 		middlewares.RequireRole("user", "admin"),
 	)
 
+	// admin routes
 	admin := apiV1.Group(
 		"/admin",
 		middlewares.SupabaseJWTMiddleware(s.DB),
 		middlewares.RequireRole("admin"),
 	)
 
+	// auth routes
 	auth := apiV1.Group("/auth")
 	auth.Get("/login/:provider", h.LoginWithProvider)
 
@@ -60,4 +62,5 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	dashboard.Get("/usage/history", h.GetHistoricalUsageHandler)
 
 	admin.Get("/tenants", h.GetAdminTenantsHandler)
+	admin.Patch("/tenants/:id/plan", h.UpdateAdminTenantPlanHandler)
 }

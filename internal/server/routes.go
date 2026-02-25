@@ -33,6 +33,11 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 		middlewares.SupabaseJWTMiddleware(s.DB),
 		middlewares.RequireRole("user", "admin"),
 	)
+	dashboard := apiV1.Group(
+		"/dashboard",
+		middlewares.SupabaseJWTMiddleware(s.DB),
+		middlewares.RequireRole("user", "admin"),
+	)
 
 	auth := apiV1.Group("/auth")
 	auth.Get("/login/:provider", h.LoginWithProvider)
@@ -44,4 +49,6 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	apiKey.Delete("/:id", h.DeleteAPIkeysForAgentsHandler)
 	apiKey.Post("/sync-expired", h.SyncExpiredAPIKeysHandler)
 	apiKey.Delete("/:id", h.RevokeAPIKeyHandler)
+
+	dashboard.Get("/usage", h.GetMonthlyUsageHandler)
 }

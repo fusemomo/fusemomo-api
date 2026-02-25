@@ -25,3 +25,11 @@ type UpdateTenantPlanRequest struct {
 	Plan                   string `json:"plan" validate:"required,oneof=free builder enterprise"`
 	MonthlyResolutionLimit int    `json:"monthly_resolution_limit" validate:"required"`
 }
+
+type GlobalUsageResponse struct {
+	TotalTenants              int            `json:"total_tenants"`
+	TotalEntities             int            `json:"total_entities"`
+	TotalInteractions         int            `json:"total_interactions"`
+	TotalResolutionsThisMonth int            `json:"total_resolutions_this_month"`
+	ByPlan                    map[string]int `json:"by_plan"`
+}

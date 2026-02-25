@@ -33,13 +33,36 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 		middlewares.SupabaseJWTMiddleware(s.DB),
 		middlewares.RequireRole("user", "admin"),
 	)
+	dashboard := apiV1.Group(
+		"/dashboard",
+		middlewares.SupabaseJWTMiddleware(s.DB),
+		middlewares.RequireRole("user", "admin"),
+	)
 
+	// admin routes
+	admin := apiV1.Group(
+		"/admin",
+		middlewares.SupabaseJWTMiddleware(s.DB),
+		middlewares.RequireRole("admin"),
+	)
+
+	// auth routes
 	auth := apiV1.Group("/auth")
 	auth.Get("/login/:provider", h.LoginWithProvider)
 
 	apiKey := app.Group("/key")
-	apiKey.Get("/", h.GetAPIKeysHandler)
+	apiKey.Get("", h.GetAPIKeysHandler)
+	apiKey.Get("/all", h.ListAllAPIKeysHandler)
 	apiKey.Post("/create", h.CreateAPIkeysForAgentsHandler)
-	apiKey.Post("/delete", h.DeleteAPIkeysForAgentsHandler)
+	apiKey.Delete("/:id", h.DeleteAPIkeysForAgentsHandler)
 	apiKey.Post("/sync-expired", h.SyncExpiredAPIKeysHandler)
+	apiKey.Delete("/:id", h.RevokeAPIKeyHandler)
+
+	dashboard.Get("/usage", h.GetMonthlyUsageHandler)
+	dashboard.Get("/usage/history", h.GetHistoricalUsageHandler)
+
+	admin.Get("/tenants", h.GetAdminTenantsHandler)
+	admin.Patch("/tenants/:id/plan", h.UpdateAdminTenantPlanHandler)
+	admin.Get("/usage/global", h.GetGlobalTenantUsagesHandler)
+	admin.Delete("/tenants/:id", h.DeleteTenantHandler)
 }

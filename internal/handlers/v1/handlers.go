@@ -416,3 +416,90 @@ func (h *Handler) LoginWithProvider(c fiber.Ctx) error {
 
 	return c.Redirect().Status(fiber.StatusTemporaryRedirect).To(authorizeURL)
 }
+
+// GetMonthlyUsageHandler godoc
+// @Summary Get current month's usage stats
+// @Description Fetch current month's usage logs and tenant limits
+// @Tags Dashboard
+// @Produce json
+// @Success      200  {object}  payload.UsageResponse
+// @Failure      401  {object}  utils.APIError
+// @Failure      500  {object}  utils.APIError
+// @Router       /dashboard/usage [get]
+func (h *Handler) GetMonthlyUsageHandler(c fiber.Ctx) error {
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Tenant ID not found in context")
+	}
+
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	now := time.Now().UTC()
+	currentYear := now.Year()
+	currentMonth := int(now.Month())
+
+	query := `
+		SELECT 
+			u.resolution_count, 
+			t.monthly_resolution_limit, 
+			u.interaction_count, 
+			t.monthly_interaction_limit, 
+			u.recommendation_count, 
+			t.plan
+		FROM tenants t
+		LEFT JOIN usage_logs u 
+			ON t.id = u.tenant_id 
+			AND u.period_year = $1 
+			AND u.period_month = $2
+		WHERE t.id = $3
+	`
+
+	var resp payload.UsageResponse
+	resp.Period = fmt.Sprintf("%04d-%02d", currentYear, currentMonth)
+
+	var (
+		resCount *int
+		resLimit int
+		intCount *int
+		intLimit int
+		recCount *int
+		plan     string
+	)
+
+	err = h.DB.QueryRow(c.Context(), query, currentYear, currentMonth, tenantID).Scan(
+		&resCount, &resLimit, &intCount, &intLimit, &recCount, &plan,
+	)
+
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return utils.Unauthorized("Tenant not found")
+		}
+		return utils.InternalServerError("Failed to fetch usage stats", err.Error())
+	}
+
+	if resCount != nil {
+		resp.ResolutionCount = *resCount
+	}
+	if intCount != nil {
+		resp.InteractionCount = *intCount
+	}
+	if recCount != nil {
+		resp.RecommendationCount = *recCount
+	}
+
+	resp.ResolutionLimit = resLimit
+	resp.InteractionLimit = intLimit
+	resp.Plan = plan
+
+	if resp.ResolutionLimit > 0 {
+		usageRatio := float64(resp.ResolutionCount) / float64(resp.ResolutionLimit)
+		resp.PercentageUsed = float64(int(usageRatio*1000)) / 10.0
+	} else {
+		resp.PercentageUsed = 0.0
+	}
+
+	return c.JSON(resp)
+}

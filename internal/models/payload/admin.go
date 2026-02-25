@@ -20,3 +20,8 @@ type AdminTenantsResponse struct {
 	Tenants []AdminTenantInfo `json:"tenants"`
 	Total   int               `json:"total"`
 }
+
+type UpdateTenantPlanRequest struct {
+	Plan                   string `json:"plan" validate:"required,oneof=free builder enterprise"`
+	MonthlyResolutionLimit int    `json:"monthly_resolution_limit" validate:"required"`
+}

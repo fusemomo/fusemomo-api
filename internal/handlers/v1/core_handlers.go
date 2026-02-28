@@ -1610,6 +1610,132 @@ func (h *Handler) RecommendsActionsHandler(c fiber.Ctx) error {
 	})
 }
 
+// RecommendsActionsOutcomesHandler godoc
+// @Summary      Record recommendation outcome (feedback loop)
+// @Description  Updates a recommendation with whether it was followed and optionally links the resulting interaction. Builder+ only. Idempotent — last write wins.
+// @Tags         Core
+// @Security     ApiKeyAuth
+// @Accept       json
+// @Produce      json
+// @Param        id   path     string                          true "Recommendation UUID"
+// @Param        request body payload.RecommendOutcomeRequest true "Outcome payload"
+// @Success      200 {object} payload.RecommendOutcomeResponse
+// @Failure      400 {object} utils.APIError
+// @Failure      401 {object} utils.APIError
+// @Failure      402 {object} utils.APIError
+// @Failure      404 {object} utils.APIError
+// @Failure      500 {object} utils.APIError
+// @Router       /v1/core/recommends/{id}/outcomes [patch]
 func (h *Handler) RecommendsActionsOutcomesHandler(c fiber.Ctx) error {
-	return nil
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Missing tenant context")
+	}
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	recIDParam := c.Params("id")
+	if recIDParam == "" {
+		return utils.BadRequest("Recommendation ID is required", "")
+	}
+	recID, err := uuid.Parse(recIDParam)
+	if err != nil {
+		return utils.BadRequest("Invalid recommendation ID format", err.Error())
+	}
+
+	var req payload.RecommendOutcomeRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return utils.BadRequest("Invalid request payload", err.Error())
+	}
+	if req.OutcomeInteractionID != nil {
+		if _, err := uuid.Parse(*req.OutcomeInteractionID); err != nil {
+			return utils.BadRequest("Field 'outcome_interaction_id' must be a valid UUID", err.Error())
+		}
+	}
+
+	ctx := c.Context()
+
+	// ── 1. Plan gate ───────────────────────────────────────────────────────
+	var plan string
+	if err := h.DB.QueryRow(ctx, `
+		SELECT plan::text FROM tenants WHERE id = $1 AND deleted_at IS NULL
+	`, tenantID).Scan(&plan); err != nil {
+		return utils.InternalServerError("Failed to fetch tenant plan", err.Error())
+	}
+	if plan == "free" {
+		return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
+			"error":         "plan_upgrade_required",
+			"message":       "Recommendation feedback is a Builder feature",
+			"current_plan":  "free",
+			"required_plan": "builder",
+			"upgrade_url":   "https://app.fusemomo.com/upgrade",
+		})
+	}
+
+	// ── 2. Verify recommendation ownership, fetch entity_id ───────────────
+	var recEntityID string
+	if err := h.DB.QueryRow(ctx, `
+		SELECT entity_id::text FROM recommendations
+		WHERE id = $1 AND tenant_id = $2
+	`, recID, tenantID).Scan(&recEntityID); err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error":             "not_found",
+				"message":           "Recommendation not found or does not belong to your account",
+				"recommendation_id": recIDParam,
+			})
+		}
+		return utils.InternalServerError("Failed to fetch recommendation", err.Error())
+	}
+
+	// ── 3. Validate outcome_interaction_id (if provided) ──────────────────
+	// The interaction must exist, belong to the same tenant, AND the same entity.
+	var interactionOutcome *string
+	if req.OutcomeInteractionID != nil {
+		var intEntityID string
+		var outcome string
+		if err := h.DB.QueryRow(ctx, `
+			SELECT entity_id::text, outcome::text FROM interactions
+			WHERE id = $1 AND tenant_id = $2
+		`, *req.OutcomeInteractionID, tenantID).Scan(&intEntityID, &outcome); err != nil {
+			if strings.Contains(err.Error(), "no rows") {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error":          "validation_error",
+					"message":        "Interaction not found or does not belong to your account",
+					"interaction_id": *req.OutcomeInteractionID,
+				})
+			}
+			return utils.InternalServerError("Failed to verify interaction", err.Error())
+		}
+		if intEntityID != recEntityID {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error":                    "validation_error",
+				"message":                  "Interaction does not belong to the same entity as the recommendation",
+				"interaction_id":           *req.OutcomeInteractionID,
+				"recommendation_entity_id": recEntityID,
+				"interaction_entity_id":    intEntityID,
+			})
+		}
+		interactionOutcome = &outcome
+	}
+
+	// ── 4. Idempotent UPDATE ───────────────────────────────────────────────
+	updatedAt := time.Now().UTC()
+	if _, err := h.DB.Exec(ctx, `
+		UPDATE recommendations
+		SET was_followed           = $1,
+		    outcome_interaction_id = $2
+		WHERE id = $3 AND tenant_id = $4
+	`, req.WasFollowed, req.OutcomeInteractionID, recID, tenantID); err != nil {
+		return utils.InternalServerError("Failed to update recommendation", err.Error())
+	}
+
+	return c.JSON(payload.RecommendOutcomeResponse{
+		RecommendationID: recIDParam,
+		WasFollowed:      req.WasFollowed,
+		Outcome:          interactionOutcome,
+		UpdatedAt:        updatedAt,
+	})
 }

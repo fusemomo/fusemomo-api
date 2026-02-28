@@ -47,3 +47,9 @@ type EntityDetailResponse struct {
 	Identifiers  []EntityIdentifier   `json:"identifiers"`
 	Interactions []InteractionSummary `json:"recent_interactions"`
 }
+
+type EntityDeleteResponse struct {
+	EntityID   string    `json:"entity_id"`
+	Anonymized bool      `json:"anonymized"`
+	ErasedAt   time.Time `json:"erased_at"`
+}

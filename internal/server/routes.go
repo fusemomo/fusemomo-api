@@ -74,4 +74,7 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	core.Get("/entities", h.GetAllEntitiesHandler)
 	core.Get("/entities/:id", h.GetEntityHandler)
 	core.Delete("/entities/:id", h.DeleteEntityHandler)
+	core.Post("/interactions/log", h.LogInteractionHandler)
+	core.Post("/interactions/batch", h.LogBatchInteractionsHandler)
+
 }

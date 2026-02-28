@@ -20,6 +20,20 @@ type ScoredActionType struct {
 	LastOccurredAt *time.Time `json:"last_occurred_at"`
 }
 
+// RecommendOutcomeRequest is the body for PATCH /v1/recommends/:id/outcomes.
+type RecommendOutcomeRequest struct {
+	WasFollowed          bool    `json:"was_followed"`
+	OutcomeInteractionID *string `json:"outcome_interaction_id"` // optional UUID
+}
+
+// RecommendOutcomeResponse is the success body for PATCH /v1/recommends/:id/outcomes.
+type RecommendOutcomeResponse struct {
+	RecommendationID string    `json:"recommendation_id"`
+	WasFollowed      bool      `json:"was_followed"`
+	Outcome          *string   `json:"outcome"` // nil when no interaction linked
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
 // RecommendResponse is the success body for POST /v1/recommends.
 type RecommendResponse struct {
 	// RecommendationID is nil when there is insufficient data.

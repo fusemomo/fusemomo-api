@@ -1,16 +1,32 @@
 package v1
 
 import (
+	"errors"
 	"fmt"
-	"fusemomo-api/internal/models/payload"
-	"fusemomo-api/internal/utils"
 	"strconv"
 	"strings"
 	"time"
 
+	"fusemomo-api/internal/models/payload"
+	"fusemomo-api/internal/utils"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
+
+// errEntityNotFound is a sentinel used to distinguish 404 from 5xx inside errgroups.
+var errEntityNotFound = errors.New("entity_not_found")
+
+// allowedSorts maps user-supplied sort keys to safe, qualified SQL column expressions.
+var allowedSorts = map[string]string{
+	"created_at":              "e.created_at",
+	"updated_at":              "e.updated_at",
+	"last_interaction_at":     "e.last_interaction_at",
+	"total_interactions":      "e.total_interactions",
+	"successful_interactions": "e.successful_interactions",
+	"behavioral_score":        "e.behavioral_score",
+}
 
 // ResolveEntitiesHandler godoc
 // @Summary      Resolve identifiers to a canonical entity
@@ -650,15 +666,6 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 	}
 
 	// Validate sort field to prevent SQL injection
-	allowedSorts := map[string]string{
-		"created_at":              "e.created_at",
-		"updated_at":              "e.updated_at",
-		"last_interaction_at":     "e.last_interaction_at",
-		"total_interactions":      "e.total_interactions",
-		"successful_interactions": "e.successful_interactions",
-		"behavioral_score":        "e.behavioral_score",
-	}
-
 	dbSortField, ok := allowedSorts[sortField]
 	if !ok {
 		dbSortField = "e.last_interaction_at"
@@ -693,59 +700,69 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 
 	whereClause := "WHERE " + strings.Join(whereClauses, " AND ")
 
-	// 3. Get Total Count
-	countQuery := fmt.Sprintf("SELECT COUNT(e.id) FROM entities e %s", whereClause)
+	ctx := c.Context()
 	var total int
-	if err := h.DB.QueryRow(c.Context(), countQuery, args...).Scan(&total); err != nil {
-		return utils.InternalServerError("Failed to get total count", err.Error())
-	}
-
-	// 4. Fetch Entities
-	// NULLS LAST handles the case where last_interaction_at is null
-	query := fmt.Sprintf(`
-		SELECT e.id, e.tenant_id, e.display_name, e.entity_type, e.total_interactions, 
-		       e.successful_interactions, e.last_interaction_at, e.preferred_action_type, 
-		       e.behavioral_score, e.metadata, e.created_at, e.updated_at
-		FROM entities e
-		%s
-		ORDER BY %s %s NULLS LAST
-		LIMIT $%d OFFSET $%d
-	`, whereClause, dbSortField, sortOrder, argID, argID+1)
-
-	fetchArgs := append(args, limit, offset)
-
-	rows, err := h.DB.Query(c.Context(), query, fetchArgs...)
-	if err != nil {
-		return utils.InternalServerError("Failed to query entities", err.Error())
-	}
-	defer rows.Close()
-
 	var entities []payload.EntityResponse
 
-	for rows.Next() {
-		var e payload.EntityResponse
-		// Create pointers for nullable types
-		var displayName, entityType, preferredAction *string
+	g, gCtx := errgroup.WithContext(ctx)
 
-		if err := rows.Scan(
-			&e.ID, &e.TenantID, &displayName, &entityType, &e.TotalInteractions,
-			&e.SuccessfulInteractions, &e.LastInteractionAt, &preferredAction,
-			&e.BehavioralScore, &e.Metadata, &e.CreatedAt, &e.UpdatedAt,
-		); err != nil {
-			return utils.InternalServerError("Failed to scan entity", err.Error())
+	// 3. Get Total Count Concurrently
+	g.Go(func() error {
+		countQuery := fmt.Sprintf("SELECT COUNT(e.id) FROM entities e %s", whereClause)
+		if err := h.DB.QueryRow(gCtx, countQuery, args...).Scan(&total); err != nil {
+			return fmt.Errorf("count_query: %w", err)
 		}
+		return nil
+	})
 
-		if displayName != nil {
-			e.DisplayName = *displayName
-		}
-		if entityType != nil {
-			e.EntityType = *entityType
-		}
-		if preferredAction != nil {
-			e.PreferredActionType = *preferredAction
-		}
+	// 4. Fetch Entities Concurrently
+	g.Go(func() error {
+		query := fmt.Sprintf(`
+			SELECT e.id, e.tenant_id, e.display_name, e.entity_type, e.total_interactions, 
+			       e.successful_interactions, e.last_interaction_at, e.preferred_action_type, 
+			       e.behavioral_score, e.metadata, e.created_at, e.updated_at
+			FROM entities e
+			%s
+			ORDER BY %s %s NULLS LAST
+			LIMIT $%d OFFSET $%d
+		`, whereClause, dbSortField, sortOrder, argID, argID+1)
 
-		entities = append(entities, e)
+		fetchArgs := append(args, limit, offset)
+		rows, err := h.DB.Query(gCtx, query, fetchArgs...)
+		if err != nil {
+			return fmt.Errorf("fetch_query: %w", err)
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var e payload.EntityResponse
+			var displayName, entityType, preferredAction *string
+
+			if err := rows.Scan(
+				&e.ID, &e.TenantID, &displayName, &entityType, &e.TotalInteractions,
+				&e.SuccessfulInteractions, &e.LastInteractionAt, &preferredAction,
+				&e.BehavioralScore, &e.Metadata, &e.CreatedAt, &e.UpdatedAt,
+			); err != nil {
+				return fmt.Errorf("scan_row: %w", err)
+			}
+
+			if displayName != nil {
+				e.DisplayName = *displayName
+			}
+			if entityType != nil {
+				e.EntityType = *entityType
+			}
+			if preferredAction != nil {
+				e.PreferredActionType = *preferredAction
+			}
+
+			entities = append(entities, e)
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		return utils.InternalServerError("Failed to fetch entities", err.Error())
 	}
 
 	if entities == nil {
@@ -796,86 +813,109 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 
 	ctx := c.Context()
 
-	// 1. Fetch Core Entity Data
 	var resp payload.EntityDetailResponse
-	var displayName, entityType, preferredAction *string
+	var identifiers []payload.EntityIdentifier
+	var interactions []payload.InteractionSummary
 
-	entityQuery := `
-		SELECT id, tenant_id, display_name, entity_type, total_interactions, 
-		       successful_interactions, last_interaction_at, preferred_action_type, 
-		       behavioral_score, metadata, created_at, updated_at
-		FROM entities
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
-	`
-	err = h.DB.QueryRow(ctx, entityQuery, entityID, tenantID).Scan(
-		&resp.ID, &resp.TenantID, &displayName, &entityType, &resp.TotalInteractions,
-		&resp.SuccessfulInteractions, &resp.LastInteractionAt, &preferredAction,
-		&resp.BehavioralScore, &resp.Metadata, &resp.CreatedAt, &resp.UpdatedAt,
-	)
-
-	if err != nil {
-		// pgx v5 returns pgx.ErrNoRows which gets generalized; we'll rely on string matching if we don't import pgx
-		if strings.Contains(err.Error(), "no rows") {
-			return utils.NotFound("Entity not found")
+	// ── Step 1: Fetch core entity row first ──────────────────────────────
+	// We gate on entity existence before spawning any further DB work so that
+	// a 404 path never wastes two extra connection-pool checkouts.
+	{
+		var displayName, entityType, preferredAction *string
+		entityQuery := `
+			SELECT id, tenant_id, display_name, entity_type, total_interactions,
+			       successful_interactions, last_interaction_at, preferred_action_type,
+			       behavioral_score, metadata, created_at, updated_at
+			FROM entities
+			WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+		`
+		if err := h.DB.QueryRow(ctx, entityQuery, entityID, tenantID).Scan(
+			&resp.ID, &resp.TenantID, &displayName, &entityType, &resp.TotalInteractions,
+			&resp.SuccessfulInteractions, &resp.LastInteractionAt, &preferredAction,
+			&resp.BehavioralScore, &resp.Metadata, &resp.CreatedAt, &resp.UpdatedAt,
+		); err != nil {
+			if strings.Contains(err.Error(), "no rows") {
+				return utils.NotFound("Entity not found")
+			}
+			return utils.InternalServerError("Failed to fetch entity", err.Error())
 		}
-		return utils.InternalServerError("Failed to fetch entity", err.Error())
-	}
-
-	if displayName != nil {
-		resp.DisplayName = *displayName
-	}
-	if entityType != nil {
-		resp.EntityType = *entityType
-	}
-	if preferredAction != nil {
-		resp.PreferredActionType = *preferredAction
-	}
-
-	// 2. Fetch Entity Identifiers
-	resp.Identifiers = make([]payload.EntityIdentifier, 0)
-	idQuery := `
-		SELECT id, source, identifier_type, identifier_value, confidence, link_strategy, verified_at
-		FROM entity_identifiers
-		WHERE entity_id = $1 AND tenant_id = $2
-	`
-	idRows, err := h.DB.Query(ctx, idQuery, entityID, tenantID)
-	if err != nil {
-		return utils.InternalServerError("Failed to fetch entity identifiers", err.Error())
-	}
-	defer idRows.Close()
-
-	for idRows.Next() {
-		var ei payload.EntityIdentifier
-		if err := idRows.Scan(&ei.ID, &ei.Source, &ei.IdentifierType, &ei.IdentifierValue, &ei.Confidence, &ei.LinkStrategy, &ei.VerifiedAt); err != nil {
-			return utils.InternalServerError("Failed to scan identifier", err.Error())
+		if displayName != nil {
+			resp.DisplayName = *displayName
 		}
-		resp.Identifiers = append(resp.Identifiers, ei)
-	}
-
-	// 3. Fetch Recent Interactions (Limit 20)
-	resp.Interactions = make([]payload.InteractionSummary, 0)
-	interactionQuery := `
-		SELECT id, api, action_type, outcome, occurred_at
-		FROM interactions
-		WHERE entity_id = $1 AND tenant_id = $2
-		ORDER BY occurred_at DESC
-		LIMIT 20
-	`
-	intRows, err := h.DB.Query(ctx, interactionQuery, entityID, tenantID)
-	if err != nil {
-		return utils.InternalServerError("Failed to fetch recent interactions", err.Error())
-	}
-	defer intRows.Close()
-
-	for intRows.Next() {
-		var is payload.InteractionSummary
-		if err := intRows.Scan(&is.ID, &is.API, &is.ActionType, &is.Outcome, &is.OccurredAt); err != nil {
-			return utils.InternalServerError("Failed to scan interaction", err.Error())
+		if entityType != nil {
+			resp.EntityType = *entityType
 		}
-		resp.Interactions = append(resp.Interactions, is)
+		if preferredAction != nil {
+			resp.PreferredActionType = *preferredAction
+		}
 	}
+
+	// ── Step 2: Concurrently fetch identifiers + recent interactions ──────
+	// Entity is confirmed to exist — safe to issue both sub-queries in parallel.
+	g, gCtx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		idQuery := `
+			SELECT id, source, identifier_type, identifier_value, confidence, link_strategy, verified_at
+			FROM entity_identifiers
+			WHERE entity_id = $1 AND tenant_id = $2
+		`
+		idRows, err := h.DB.Query(gCtx, idQuery, entityID, tenantID)
+		if err != nil {
+			return fmt.Errorf("identifiers_query: %w", err)
+		}
+		defer idRows.Close()
+
+		for idRows.Next() {
+			var ei payload.EntityIdentifier
+			if err := idRows.Scan(&ei.ID, &ei.Source, &ei.IdentifierType, &ei.IdentifierValue, &ei.Confidence, &ei.LinkStrategy, &ei.VerifiedAt); err != nil {
+				return fmt.Errorf("identifiers_scan: %w", err)
+			}
+			identifiers = append(identifiers, ei)
+		}
+		return nil
+	})
+
+	g.Go(func() error {
+		interactionQuery := `
+			SELECT id, api, action_type, outcome, occurred_at
+			FROM interactions
+			WHERE entity_id = $1 AND tenant_id = $2
+			ORDER BY occurred_at DESC
+			LIMIT 20
+		`
+		intRows, err := h.DB.Query(gCtx, interactionQuery, entityID, tenantID)
+		if err != nil {
+			return fmt.Errorf("interactions_query: %w", err)
+		}
+		defer intRows.Close()
+
+		for intRows.Next() {
+			var is payload.InteractionSummary
+			if err := intRows.Scan(&is.ID, &is.API, &is.ActionType, &is.Outcome, &is.OccurredAt); err != nil {
+				return fmt.Errorf("interactions_scan: %w", err)
+			}
+			interactions = append(interactions, is)
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		return utils.InternalServerError("Failed to fetch entity details", err.Error())
+	}
+
+	if identifiers == nil {
+		identifiers = make([]payload.EntityIdentifier, 0)
+	}
+	if interactions == nil {
+		interactions = make([]payload.InteractionSummary, 0)
+	}
+
+	resp.Identifiers = identifiers
+	resp.Interactions = interactions
 
 	return c.JSON(resp)
+
 }
 
 // DeleteEntityHandler godoc
@@ -912,16 +952,18 @@ func (h *Handler) DeleteEntityHandler(c fiber.Ctx) error {
 		return utils.BadRequest("Invalid Entity ID format", err.Error())
 	}
 
+	ctx := c.Context()
+
 	// Call the Postgres function for GDPR anonymization
 	query := `SELECT fn_anonymize_entity($1, $2)`
-	_, err = h.DB.Exec(c.Context(), query, tenantID, entityID)
+	_, err = h.DB.Exec(ctx, query, tenantID, entityID)
 
 	if err != nil {
 		// PostgreSQL RAISE EXCEPTION 'Entity % not found for tenant %'
 		if strings.Contains(err.Error(), "not found") {
 			return utils.NotFound("Entity not found")
 		}
-		return utils.InternalServerError("Failed to anonymize entity", err.Error())
+		return utils.InternalServerError("Failed to anonymize entity", fmt.Errorf("anonymize_error: %w", err).Error())
 	}
 
 	return c.JSON(payload.EntityDeleteResponse{

@@ -353,3 +353,193 @@ func (h *Handler) DeleteEntityHandler(c fiber.Ctx) error {
 		ErasedAt:   time.Now().UTC(),
 	})
 }
+
+// LogInteractionHandler godoc
+// @Summary Log a single interaction
+// @Description Logs a behavioral event/interaction for a given entity and increments the tenant's interaction usage counter.
+// @Tags Core
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body payload.InteractionLogRequest true "Interaction RequestPayload"
+// @Success 200 {object} payload.InteractionLogResponse
+// @Failure 400 {object} utils.APIError
+// @Failure 401 {object} utils.APIError
+// @Failure 500 {object} utils.APIError
+// @Router /v1/interactions/log [post]
+func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Missing tenant context")
+	}
+
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	var req payload.InteractionLogRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return utils.BadRequest("Invalid request payload", err.Error())
+	}
+
+	if err := utils.Validator.Struct(&req); err != nil {
+		return utils.BadRequest("Validation failed", err.Error())
+	}
+
+	occurredAt := time.Now().UTC()
+	if req.OccurredAt != nil {
+		occurredAt = *req.OccurredAt
+	}
+
+	ctx := c.Context()
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		return utils.InternalServerError("Failed to start transaction", err.Error())
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Insert Interaction
+	var interactionID string
+	insertQuery := `
+		INSERT INTO interactions (tenant_id, entity_id, api, action_type, action, outcome, intent, agent_id, external_ref, metadata, occurred_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		RETURNING id
+	`
+	err = tx.QueryRow(ctx, insertQuery,
+		tenantID, req.EntityID, req.API, req.ActionType, req.Action,
+		req.Outcome, req.Intent, req.AgentID, req.ExternalRef, req.Metadata, occurredAt,
+	).Scan(&interactionID)
+
+	if err != nil {
+		return utils.InternalServerError("Failed to log interaction", err.Error())
+	}
+
+	// 2. Increment Usage Counter
+	_, err = tx.Exec(ctx, `SELECT fn_increment_usage($1, 'interaction')`, tenantID)
+	if err != nil {
+		return utils.InternalServerError("Failed to increment usage", err.Error())
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return utils.InternalServerError("Failed to commit transaction", err.Error())
+	}
+
+	return c.JSON(payload.InteractionLogResponse{
+		InteractionID: interactionID,
+		LoggedAt:      time.Now().UTC(),
+	})
+}
+
+// LogBatchInteractionsHandler godoc
+// @Summary Log multiple interactions
+// @Description Logs a batch of behavioral events using a multi-row insert and increments usage counters. Max 100 per request.
+// @Tags Core
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body payload.BatchInteractionLogRequest true "Batch Interaction payload"
+// @Success 200 {object} payload.BatchInteractionLogResponse
+// @Failure 400 {object} utils.APIError
+// @Failure 401 {object} utils.APIError
+// @Failure 500 {object} utils.APIError
+// @Router /v1/interactions/batch [post]
+func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Missing tenant context")
+	}
+
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	var req payload.BatchInteractionLogRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return utils.BadRequest("Invalid request payload", err.Error())
+	}
+
+	if err := utils.Validator.Struct(&req); err != nil {
+		return utils.BadRequest("Validation failed", err.Error())
+	}
+
+	if len(req.Interactions) == 0 {
+		return utils.BadRequest("Empty interactions list", "")
+	}
+
+	ctx := c.Context()
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		return utils.InternalServerError("Failed to start transaction", err.Error())
+	}
+	defer tx.Rollback(ctx)
+
+	// Build multi-row INSERT query
+	var valueStrings []string
+	var valueArgs []interface{}
+	argID := 1
+
+	for _, item := range req.Interactions {
+		occurredAt := time.Now().UTC()
+		if item.OccurredAt != nil {
+			occurredAt = *item.OccurredAt
+		}
+
+		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			argID, argID+1, argID+2, argID+3, argID+4, argID+5, argID+6, argID+7, argID+8, argID+9, argID+10))
+
+		valueArgs = append(valueArgs,
+			tenantID, item.EntityID, item.API, item.ActionType, item.Action,
+			item.Outcome, item.Intent, item.AgentID, item.ExternalRef, item.Metadata, occurredAt,
+		)
+		argID += 11
+	}
+
+	insertQuery := fmt.Sprintf(`
+		INSERT INTO interactions (tenant_id, entity_id, api, action_type, action, outcome, intent, agent_id, external_ref, metadata, occurred_at)
+		VALUES %s
+		RETURNING id
+	`, strings.Join(valueStrings, ","))
+
+	rows, err := tx.Query(ctx, insertQuery, valueArgs...)
+	if err != nil {
+		return utils.InternalServerError("Failed to log batch interactions", err.Error())
+	}
+	defer rows.Close()
+
+	var insertedIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return utils.InternalServerError("Failed to scan returning ID", err.Error())
+		}
+		insertedIDs = append(insertedIDs, id)
+	}
+
+	// Increment usage for the batch size
+	// Note: We run the increment N times rather than modifying the Postgres function.
+	for i := 0; i < len(req.Interactions); i++ {
+		_, err = tx.Exec(ctx, `SELECT fn_increment_usage($1, 'interaction')`, tenantID)
+		if err != nil {
+			return utils.InternalServerError("Failed to increment usage", err.Error())
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return utils.InternalServerError("Failed to commit transaction", err.Error())
+	}
+
+	firstID := ""
+	lastID := ""
+	if len(insertedIDs) > 0 {
+		firstID = insertedIDs[0]
+		lastID = insertedIDs[len(insertedIDs)-1]
+	}
+
+	return c.JSON(payload.BatchInteractionLogResponse{
+		LoggedCount: len(req.Interactions),
+		FirstID:     firstID,
+		LastID:      lastID,
+	})
+}

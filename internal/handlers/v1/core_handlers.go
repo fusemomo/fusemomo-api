@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -1388,4 +1389,227 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 		LastID:      lastID,
 		LoggedAt:    time.Now().UTC(),
 	})
+}
+
+// RecommendsActionsHandler godoc
+// @Summary      Get next best action recommendation (L3)
+// @Description  Scores all action types for an entity + intent using behavioral history, returns the highest-confidence recommendation. Free tier returns 402. Returns 200 with null recommendation when data is insufficient.
+// @Tags         Core
+// @Security     ApiKeyAuth
+// @Accept       json
+// @Produce      json
+// @Param        request body payload.RecommendRequest true "Recommendation request"
+// @Success      200 {object} payload.RecommendResponse
+// @Failure      400 {object} utils.APIError
+// @Failure      401 {object} utils.APIError
+// @Failure      402 {object} utils.APIError
+// @Failure      404 {object} utils.APIError
+// @Failure      500 {object} utils.APIError
+// @Router       /v1/core/recommends [post]
+func (h *Handler) RecommendsActionsHandler(c fiber.Ctx) error {
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Missing tenant context")
+	}
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	// ── 1. Parse & validate request ────────────────────────────────────────
+	var req payload.RecommendRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return utils.BadRequest("Invalid request payload", err.Error())
+	}
+	if err := utils.Validator.Struct(&req); err != nil {
+		return utils.BadRequest("Validation failed", err.Error())
+	}
+	if req.LookbackDays < 0 || req.LookbackDays > 730 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":          "validation_error",
+			"message":        "Field 'lookback_days' must be between 1 and 730",
+			"field":          "lookback_days",
+			"provided_value": req.LookbackDays,
+		})
+	}
+	if req.MinSampleSize < 0 || req.MinSampleSize > 100 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":          "validation_error",
+			"message":        "Field 'min_sample_size' must be between 1 and 100",
+			"field":          "min_sample_size",
+			"provided_value": req.MinSampleSize,
+		})
+	}
+	minSampleSize := req.MinSampleSize
+	if minSampleSize == 0 {
+		minSampleSize = 2
+	}
+
+	ctx := c.Context()
+
+	// ── 2. Fetch tenant plan + gate free tier ──────────────────────────────
+	var plan string
+	if err := h.DB.QueryRow(ctx, `
+		SELECT plan::text FROM tenants WHERE id = $1 AND deleted_at IS NULL
+	`, tenantID).Scan(&plan); err != nil {
+		return utils.InternalServerError("Failed to fetch tenant plan", err.Error())
+	}
+	if plan == "free" {
+		return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
+			"error":         "plan_upgrade_required",
+			"message":       "Recommendations are a Builder feature. Upgrade to access behavioral intelligence.",
+			"current_plan":  "free",
+			"required_plan": "builder",
+			"feature":       "recommendations",
+			"upgrade_url":   "https://app.fusemomo.com/upgrade",
+		})
+	}
+
+	// ── 3. Resolve lookback window ─────────────────────────────────────────
+	lookbackDays := req.LookbackDays
+	if lookbackDays == 0 {
+		switch plan {
+		case "enterprise":
+			lookbackDays = 730
+		default: // builder
+			lookbackDays = 90
+		}
+	}
+
+	// ── 4. Entity existence check ─────────────────────────────────────────
+	var entityExists bool
+	if err := h.DB.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM entities WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+		)
+	`, req.EntityID, tenantID).Scan(&entityExists); err != nil {
+		return utils.InternalServerError("Failed to verify entity", err.Error())
+	}
+	if !entityExists {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error":     "not_found",
+			"message":   "Entity not found or does not belong to your account",
+			"entity_id": req.EntityID,
+		})
+	}
+
+	// ── 5. Call fn_score_action_types ─────────────────────────────────────
+	// We pass intent as a nullable string so the PG function's NULL check works.
+	rows, err := h.DB.Query(ctx, `
+		SELECT action_type, total_count, success_count, success_rate,
+		       last_success_at, last_occurred_at
+		FROM fn_score_action_types($1, $2, $3)
+	`, req.EntityID, req.Intent, lookbackDays)
+	if err != nil {
+		return utils.InternalServerError("Failed to score action types", err.Error())
+	}
+	defer rows.Close()
+
+	var scored []payload.ScoredActionType
+	var totalSampleSize int64
+	for rows.Next() {
+		var s payload.ScoredActionType
+		if err := rows.Scan(
+			&s.ActionType, &s.TotalCount, &s.SuccessCount,
+			&s.SuccessRate, &s.LastSuccessAt, &s.LastOccurredAt,
+		); err != nil {
+			return utils.InternalServerError("Failed to scan scoring result", err.Error())
+		}
+		totalSampleSize += s.TotalCount
+		scored = append(scored, s)
+	}
+	rows.Close()
+
+	// ── 6. Build scoring breakdown map (all action types, unfiltered) ─────
+	breakdown := make(map[string]float64, len(scored))
+	for _, s := range scored {
+		breakdown[s.ActionType] = s.SuccessRate
+	}
+
+	// ── 7. Filter by min_sample_size and pick top recommendation ─────────
+	var top *payload.ScoredActionType
+	for i := range scored {
+		if scored[i].TotalCount >= int64(minSampleSize) {
+			top = &scored[i]
+			break // fn_score_action_types already returns ordered: success_rate DESC, success_count DESC
+		}
+	}
+
+	// ── 8. Handle insufficient data — return 200 with null recommendation ─
+	if top == nil {
+		return c.JSON(payload.RecommendResponse{
+			RecommendationID:      nil,
+			EntityID:              req.EntityID,
+			Intent:                req.Intent,
+			RecommendedActionType: nil,
+			Confidence:            nil,
+			ScoringBreakdown:      breakdown,
+			Reason: fmt.Sprintf(
+				"Insufficient interaction history for this entity and intent. Need at least %d interactions.",
+				minSampleSize,
+			),
+			SampleSize:   totalSampleSize,
+			LookbackDays: lookbackDays,
+		})
+	}
+
+	// ── 9. Log recommendation + increment usage in a transaction ──────────
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		return utils.InternalServerError("Failed to start transaction", err.Error())
+	}
+	defer tx.Rollback(ctx)
+
+	// Marshal breakdown for JSONB column
+	breakdownJSON, err := json.Marshal(breakdown)
+	if err != nil {
+		return utils.InternalServerError("Failed to serialize scoring breakdown", err.Error())
+	}
+
+	var recommendationID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO recommendations
+		  (tenant_id, entity_id, intent, recommended_action_type, confidence_score, scoring_breakdown)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id
+	`,
+		tenantID, req.EntityID, req.Intent,
+		top.ActionType, top.SuccessRate, breakdownJSON,
+	).Scan(&recommendationID); err != nil {
+		return utils.InternalServerError("Failed to log recommendation", err.Error())
+	}
+
+	if _, err := tx.Exec(ctx, `SELECT fn_increment_usage($1, 'recommendation')`, tenantID); err != nil {
+		return utils.InternalServerError("Failed to increment usage", err.Error())
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return utils.InternalServerError("Failed to commit transaction", err.Error())
+	}
+
+	// ── 10. Build human-readable reason ───────────────────────────────────
+	reason := fmt.Sprintf(
+		"%s succeeded %d of %d times in the last %d days for %s",
+		top.ActionType, top.SuccessCount, top.TotalCount, lookbackDays, req.Intent,
+	)
+
+	confidence := top.SuccessRate
+	recIDStr := recommendationID
+	actionType := top.ActionType
+
+	return c.JSON(payload.RecommendResponse{
+		RecommendationID:      &recIDStr,
+		EntityID:              req.EntityID,
+		Intent:                req.Intent,
+		RecommendedActionType: &actionType,
+		Confidence:            &confidence,
+		ScoringBreakdown:      breakdown,
+		Reason:                reason,
+		SampleSize:            totalSampleSize,
+		LookbackDays:          lookbackDays,
+	})
+}
+
+func (h *Handler) RecommendsActionsOutcomesHandler(c fiber.Ctx) error {
+	return nil
 }

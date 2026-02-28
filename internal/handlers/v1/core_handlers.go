@@ -932,67 +932,138 @@ func (h *Handler) DeleteEntityHandler(c fiber.Ctx) error {
 }
 
 // LogInteractionHandler godoc
-// @Summary Log a single interaction
-// @Description Logs a behavioral event/interaction for a given entity and increments the tenant's interaction usage counter.
-// @Tags Core
-// @Security ApiKeyAuth
-// @Accept json
-// @Produce json
-// @Param request body payload.InteractionLogRequest true "Interaction RequestPayload"
-// @Success 200 {object} payload.InteractionLogResponse
-// @Failure 400 {object} utils.APIError
-// @Failure 401 {object} utils.APIError
-// @Failure 500 {object} utils.APIError
-// @Router /v1/interactions/log [post]
+// @Summary      Log a single interaction
+// @Description  Appends a behavioral event to the L2 Behavioral Graph. Supports idempotent logging via external_ref. Entity must exist and belong to the calling tenant.
+// @Tags         Core
+// @Security     ApiKeyAuth
+// @Accept       json
+// @Produce      json
+// @Param        request body payload.InteractionLogRequest true "Interaction payload"
+// @Success      201 {object} payload.InteractionLogResponse
+// @Failure      400 {object} utils.APIError
+// @Failure      401 {object} utils.APIError
+// @Failure      404 {object} utils.APIError
+// @Failure      500 {object} utils.APIError
+// @Router       /v1/core/interactions/log [post]
 func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {
 		return utils.Unauthorized("Missing tenant context")
 	}
-
 	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
 	if err != nil {
 		return utils.Unauthorized("Invalid tenant ID format")
 	}
 
+	// ── 1. Parse & validate ───────────────────────────────────────────────
 	var req payload.InteractionLogRequest
 	if err := c.Bind().JSON(&req); err != nil {
 		return utils.BadRequest("Invalid request payload", err.Error())
 	}
-
 	if err := utils.Validator.Struct(&req); err != nil {
 		return utils.BadRequest("Validation failed", err.Error())
 	}
 
-	occurredAt := time.Now().UTC()
+	// Metadata 50KB limit
+	metaSize, err := req.MetadataByteSize()
+	if err != nil {
+		return utils.BadRequest("Field 'metadata' contains invalid JSON", err.Error())
+	}
+	if metaSize > 50*1024 {
+		return utils.BadRequest("Field 'metadata' exceeds maximum size of 50KB")
+	}
+
+	// occurred_at validation
+	now := time.Now().UTC()
+	occurredAt := now
 	if req.OccurredAt != nil {
-		occurredAt = *req.OccurredAt
+		ts := req.OccurredAt.UTC()
+		if ts.After(now) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error":          "validation_error",
+				"message":        "Field 'occurred_at' cannot be in the future",
+				"field":          "occurred_at",
+				"provided_value": ts.Format(time.RFC3339),
+			})
+		}
+		if ts.Before(now.AddDate(-1, 0, 0)) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error":          "validation_error",
+				"message":        "Field 'occurred_at' cannot be more than 1 year in the past",
+				"field":          "occurred_at",
+				"provided_value": ts.Format(time.RFC3339),
+			})
+		}
+		occurredAt = ts
 	}
 
 	ctx := c.Context()
+
+	// ── 2. Entity existence check ─────────────────────────────────────────
+	var entityExists bool
+	if err := h.DB.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM entities
+			WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+		)
+	`, req.EntityID, tenantID).Scan(&entityExists); err != nil {
+		return utils.InternalServerError("Failed to verify entity", err.Error())
+	}
+	if !entityExists {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error":     "not_found",
+			"message":   "Entity not found or does not belong to your account",
+			"entity_id": req.EntityID,
+		})
+	}
+
+	// ── 3. Deduplication via external_ref ────────────────────────────────
+	if req.ExternalRef != nil && *req.ExternalRef != "" {
+		var existingID string
+		var existingCreatedAt time.Time
+		dupErr := h.DB.QueryRow(ctx, `
+			SELECT id, created_at FROM interactions
+			WHERE tenant_id = $1 AND api = $2 AND external_ref = $3
+			LIMIT 1
+		`, tenantID, req.API, *req.ExternalRef).Scan(&existingID, &existingCreatedAt)
+		if dupErr == nil {
+			// Already logged — return existing record idempotently (200, not 201)
+			return c.Status(fiber.StatusOK).JSON(payload.InteractionLogResponse{
+				InteractionID: existingID,
+				EntityID:      req.EntityID,
+				LoggedAt:      existingCreatedAt,
+			})
+		}
+		// dupErr == pgx.ErrNoRows means not a duplicate — continue
+		if !strings.Contains(dupErr.Error(), "no rows") {
+			return utils.InternalServerError("Failed to check for duplicate interaction", dupErr.Error())
+		}
+	}
+
+	// ── 4. Insert + increment usage in a transaction ──────────────────────
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
 		return utils.InternalServerError("Failed to start transaction", err.Error())
 	}
 	defer tx.Rollback(ctx)
 
-	// 1. Insert Interaction
 	var interactionID string
-	insertQuery := `
-		INSERT INTO interactions (tenant_id, entity_id, api, action_type, action, outcome, intent, agent_id, external_ref, metadata, occurred_at)
+	var loggedAt time.Time
+	err = tx.QueryRow(ctx, `
+		INSERT INTO interactions
+		  (tenant_id, entity_id, api, action_type, action, outcome,
+		   intent, agent_id, external_ref, metadata, occurred_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		RETURNING id
-	`
-	err = tx.QueryRow(ctx, insertQuery,
+		RETURNING id, created_at
+	`,
 		tenantID, req.EntityID, req.API, req.ActionType, req.Action,
-		req.Outcome, req.Intent, req.AgentID, req.ExternalRef, req.Metadata, occurredAt,
-	).Scan(&interactionID)
-
+		req.Outcome, req.Intent, req.AgentID, req.ExternalRef,
+		req.Metadata, occurredAt,
+	).Scan(&interactionID, &loggedAt)
 	if err != nil {
 		return utils.InternalServerError("Failed to log interaction", err.Error())
 	}
 
-	// 2. Increment Usage Counter
 	_, err = tx.Exec(ctx, `SELECT fn_increment_usage($1, 'interaction')`, tenantID)
 	if err != nil {
 		return utils.InternalServerError("Failed to increment usage", err.Error())
@@ -1002,9 +1073,10 @@ func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 		return utils.InternalServerError("Failed to commit transaction", err.Error())
 	}
 
-	return c.JSON(payload.InteractionLogResponse{
+	return c.Status(fiber.StatusCreated).JSON(payload.InteractionLogResponse{
 		InteractionID: interactionID,
-		LoggedAt:      time.Now().UTC(),
+		EntityID:      req.EntityID,
+		LoggedAt:      loggedAt,
 	})
 }
 

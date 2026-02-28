@@ -376,6 +376,219 @@ func isValidIdentifierKey(k string) bool {
 	return len(k) > 0
 }
 
+// LinkEntityManuallyHandler godoc
+// @Summary      Manually link identifiers to an entity
+// @Description  Adds one or more new identifiers to an existing entity. Returns 409 if any identifier already belongs to a different entity, so the caller can decide whether to merge or reject.
+// @Tags         Core
+// @Security     ApiKeyAuth
+// @Accept       json
+// @Produce      json
+// @Param        id   path     string                         true  "Entity UUID"
+// @Param        request body payload.LinkIdentifiersRequest true  "Link request"
+// @Success      200  {object} payload.LinkIdentifiersResponse
+// @Failure      400  {object} utils.APIError
+// @Failure      401  {object} utils.APIError
+// @Failure      404  {object} utils.APIError
+// @Failure      409  {object} utils.APIError
+// @Failure      500  {object} utils.APIError
+// @Router       /v1/core/entities/{id}/link [post]
+func (h *Handler) LinkEntityManuallyHandler(c fiber.Ctx) error {
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Missing tenant context")
+	}
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	entityIDParam := c.Params("id")
+	if entityIDParam == "" {
+		return utils.BadRequest("Entity ID is required")
+	}
+	entityID, err := uuid.Parse(entityIDParam)
+	if err != nil {
+		return utils.BadRequest("Invalid Entity ID format", err.Error())
+	}
+
+	// ── 1. Parse & validate request ────────────────────────────────────────
+	var req payload.LinkIdentifiersRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return utils.BadRequest("Invalid request payload", err.Error())
+	}
+	if len(req.Identifiers) == 0 {
+		return &utils.APIError{
+			Code:    fiber.StatusBadRequest,
+			Message: "Field 'identifiers' is required and must contain at least one identifier",
+		}
+	}
+	for k, v := range req.Identifiers {
+		if len(k) > 100 || !isValidIdentifierKey(k) {
+			return &utils.APIError{
+				Code:    fiber.StatusBadRequest,
+				Message: fmt.Sprintf("Identifier key '%s' is invalid (max 100 chars, alphanumeric + underscore)", k),
+			}
+		}
+		if len(v) > 1000 {
+			return &utils.APIError{
+				Code:    fiber.StatusBadRequest,
+				Message: fmt.Sprintf("Identifier value for key '%s' exceeds maximum length of 1000 characters", k),
+			}
+		}
+	}
+
+	// Validate link_strategy
+	linkStrategy := "deterministic"
+	if req.LinkStrategy != nil {
+		switch *req.LinkStrategy {
+		case "deterministic", "probabilistic":
+			linkStrategy = *req.LinkStrategy
+		default:
+			return &utils.APIError{
+				Code:    fiber.StatusBadRequest,
+				Message: "Field 'link_strategy' must be 'deterministic' or 'probabilistic'",
+			}
+		}
+	}
+
+	// Validate confidence
+	confidence := 1.0
+	if req.Confidence != nil {
+		if *req.Confidence < 0.0 || *req.Confidence > 1.0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error":          "validation_error",
+				"message":        "Field 'confidence' must be between 0.0 and 1.0",
+				"field":          "confidence",
+				"provided_value": *req.Confidence,
+			})
+		}
+		confidence = *req.Confidence
+	}
+
+	ctx := c.Context()
+
+	// ── 2. Verify entity exists and belongs to tenant ──────────────────────
+	var exists bool
+	err = h.DB.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM entities
+			WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+		)
+	`, entityID, tenantID).Scan(&exists)
+	if err != nil {
+		return utils.InternalServerError("Failed to check entity", err.Error())
+	}
+	if !exists {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error":     "not_found",
+			"message":   "Entity not found or does not belong to your account",
+			"entity_id": entityID.String(),
+		})
+	}
+
+	// ── 3. Check for conflicts on OTHER entities ───────────────────────────
+	inValues := make([]string, 0, len(req.Identifiers))
+	for _, v := range req.Identifiers {
+		inValues = append(inValues, v)
+	}
+
+	// Build $2, $3, ... placeholders
+	placeholders := make([]string, len(inValues))
+	conflictArgs := []interface{}{tenantID, entityID}
+	for i, v := range inValues {
+		placeholders[i] = fmt.Sprintf("$%d", i+3)
+		conflictArgs = append(conflictArgs, v)
+	}
+
+	conflictSQL := fmt.Sprintf(`
+		SELECT entity_id, identifier_value
+		FROM entity_identifiers
+		WHERE tenant_id = $1
+		  AND entity_id != $2
+		  AND identifier_value IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	conflictRows, err := h.DB.Query(ctx, conflictSQL, conflictArgs...)
+	if err != nil {
+		return utils.InternalServerError("Failed to check identifier conflicts", err.Error())
+	}
+	defer conflictRows.Close()
+
+	var conflicts []payload.IdentifierConflict
+	for conflictRows.Next() {
+		var existingEntityID uuid.UUID
+		var identifierValue string
+		if err := conflictRows.Scan(&existingEntityID, &identifierValue); err != nil {
+			return utils.InternalServerError("Failed to scan conflict row", err.Error())
+		}
+		conflicts = append(conflicts, payload.IdentifierConflict{
+			IdentifierValue:  identifierValue,
+			ExistingEntityID: existingEntityID.String(),
+			ActionRequired:   "merge_entities_or_reject",
+		})
+	}
+	conflictRows.Close()
+
+	if len(conflicts) > 0 {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":     "identifier_conflict",
+			"message":   "One or more identifiers are already linked to a different entity",
+			"conflicts": conflicts,
+		})
+	}
+
+	// ── 4. Insert new identifiers (skip already-linked ones) ──────────────
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		return utils.InternalServerError("Failed to start transaction", err.Error())
+	}
+	defer tx.Rollback(ctx)
+
+	linkedCount := 0
+	for src, val := range req.Identifiers {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO entity_identifiers
+			  (entity_id, tenant_id, source, identifier_type, identifier_value, confidence, link_strategy)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (tenant_id, source, identifier_value) DO NOTHING
+		`, entityID, tenantID, src, src, val, confidence, linkStrategy)
+		if err != nil {
+			return utils.InternalServerError("Failed to insert identifier", err.Error())
+		}
+		linkedCount += int(tag.RowsAffected())
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return utils.InternalServerError("Failed to commit transaction", err.Error())
+	}
+
+	// ── 5. Fetch all identifiers and return ───────────────────────────────
+	idRows, err := h.DB.Query(ctx, `
+		SELECT id, source, identifier_type, identifier_value, confidence, link_strategy, verified_at
+		FROM entity_identifiers
+		WHERE entity_id = $1 AND tenant_id = $2
+	`, entityID, tenantID)
+	if err != nil {
+		return utils.InternalServerError("Failed to fetch entity identifiers", err.Error())
+	}
+	defer idRows.Close()
+
+	identifiers := make([]payload.EntityIdentifier, 0)
+	for idRows.Next() {
+		var ei payload.EntityIdentifier
+		if err := idRows.Scan(&ei.ID, &ei.Source, &ei.IdentifierType, &ei.IdentifierValue, &ei.Confidence, &ei.LinkStrategy, &ei.VerifiedAt); err != nil {
+			return utils.InternalServerError("Failed to scan identifier", err.Error())
+		}
+		identifiers = append(identifiers, ei)
+	}
+
+	return c.JSON(payload.LinkIdentifiersResponse{
+		EntityID:    entityID.String(),
+		Identifiers: identifiers,
+		LinkedCount: linkedCount,
+	})
+}
+
 // GetAllEntitiesHandler godoc
 // @Summary List all entities
 // @Description Returns a paginated list of entities matching the filters

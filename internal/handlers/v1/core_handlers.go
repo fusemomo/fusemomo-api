@@ -6,6 +6,7 @@ import (
 	"fusemomo-api/internal/utils"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -300,6 +301,55 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 	return c.JSON(resp)
 }
 
+// DeleteEntityHandler godoc
+// @Summary Anonymize an entity (GDPR erasure)
+// @Description Irreversibly redacts an entity's PII, identifiers, and metadata, leaving only anonymized behavioral records for analytics.
+// @Tags Core
+// @Security ApiKeyAuth
+// @Produce json
+// @Param id path string true "Entity ID"
+// @Success 200 {object} payload.EntityDeleteResponse
+// @Failure 400 {object} utils.APIError
+// @Failure 401 {object} utils.APIError
+// @Failure 404 {object} utils.APIError
+// @Failure 500 {object} utils.APIError
+// @Router /v1/entities/{id} [delete]
 func (h *Handler) DeleteEntityHandler(c fiber.Ctx) error {
-	return nil
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Missing tenant context")
+	}
+
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	entityIDParam := c.Params("id")
+	if entityIDParam == "" {
+		return utils.BadRequest("Entity ID is required", "")
+	}
+
+	entityID, err := uuid.Parse(entityIDParam)
+	if err != nil {
+		return utils.BadRequest("Invalid Entity ID format", err.Error())
+	}
+
+	// Call the Postgres function for GDPR anonymization
+	query := `SELECT fn_anonymize_entity($1, $2)`
+	_, err = h.DB.Exec(c.Context(), query, tenantID, entityID)
+
+	if err != nil {
+		// PostgreSQL RAISE EXCEPTION 'Entity % not found for tenant %'
+		if strings.Contains(err.Error(), "not found") {
+			return utils.NotFound("Entity not found")
+		}
+		return utils.InternalServerError("Failed to anonymize entity", err.Error())
+	}
+
+	return c.JSON(payload.EntityDeleteResponse{
+		EntityID:   entityID.String(),
+		Anonymized: true,
+		ErasedAt:   time.Now().UTC(),
+	})
 }

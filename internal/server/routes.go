@@ -46,6 +46,11 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 		middlewares.RequireRole("admin"),
 	)
 
+	core := apiV1.Group(
+		"/core",
+		middlewares.APIKeyMiddleware(s.DB),
+	)
+
 	// auth routes
 	auth := apiV1.Group("/auth")
 	auth.Get("/login/:provider", h.LoginWithProvider)
@@ -65,4 +70,8 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	admin.Patch("/tenants/:id/plan", h.UpdateAdminTenantPlanHandler)
 	admin.Get("/usage/global", h.GetGlobalTenantUsagesHandler)
 	admin.Delete("/tenants/:id", h.DeleteTenantHandler)
+
+	core.Get("/entities", h.GetAllEntitiesHandler)
+	core.Get("/entities/:id", h.GetEntityHandler)
+	core.Delete("/entities/:id", h.DeleteEntityHandler)
 }

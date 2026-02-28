@@ -89,3 +89,24 @@ type ResolveEntityResponse struct {
 	Metadata               map[string]any     `json:"metadata"`
 	CreatedAt              time.Time          `json:"created_at"`
 }
+
+// LinkIdentifiersRequest is the request body for POST /v1/entities/:id/link.
+type LinkIdentifiersRequest struct {
+	Identifiers  map[string]string `json:"identifiers"  validate:"required,min=1"`
+	LinkStrategy *string           `json:"link_strategy"` // "deterministic" | "probabilistic"
+	Confidence   *float64          `json:"confidence"`    // 0.0–1.0
+}
+
+// IdentifierConflict describes a single conflicting identifier for a 409 response.
+type IdentifierConflict struct {
+	IdentifierValue  string `json:"identifier_value"`
+	ExistingEntityID string `json:"existing_entity_id"`
+	ActionRequired   string `json:"action_required"`
+}
+
+// LinkIdentifiersResponse is the success body for POST /v1/entities/:id/link.
+type LinkIdentifiersResponse struct {
+	EntityID    string             `json:"entity_id"`
+	Identifiers []EntityIdentifier `json:"identifiers"`
+	LinkedCount int                `json:"linked_count"`
+}

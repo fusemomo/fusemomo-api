@@ -72,6 +72,7 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	admin.Delete("/tenants/:id", h.DeleteTenantHandler)
 
 	core.Post("/entities/resolve", h.ResolveEntitiesHandler)
+	core.Post("/entities/:id/link", h.LinkEntityManuallyHandler)
 	core.Get("/entities", h.GetAllEntitiesHandler)
 	core.Get("/entities/:id", h.GetEntityHandler)
 	core.Delete("/entities/:id", h.DeleteEntityHandler)

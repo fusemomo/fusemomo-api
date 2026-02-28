@@ -1081,24 +1081,24 @@ func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 }
 
 // LogBatchInteractionsHandler godoc
-// @Summary Log multiple interactions
-// @Description Logs a batch of behavioral events using a multi-row insert and increments usage counters. Max 100 per request.
-// @Tags Core
-// @Security ApiKeyAuth
-// @Accept json
-// @Produce json
-// @Param request body payload.BatchInteractionLogRequest true "Batch Interaction payload"
-// @Success 200 {object} payload.BatchInteractionLogResponse
-// @Failure 400 {object} utils.APIError
-// @Failure 401 {object} utils.APIError
-// @Failure 500 {object} utils.APIError
-// @Router /v1/interactions/batch [post]
+// @Summary      Log multiple interactions
+// @Description  Atomically logs up to 100 interaction events. All items are validated before any insert. Duplicate external_refs are skipped (idempotent), not rejected. Returns 201 Created.
+// @Tags         Core
+// @Security     ApiKeyAuth
+// @Accept       json
+// @Produce      json
+// @Param        request body payload.BatchInteractionLogRequest true "Batch interaction payload"
+// @Success      201 {object} payload.BatchInteractionLogResponse
+// @Failure      400 {object} utils.APIError
+// @Failure      401 {object} utils.APIError
+// @Failure      404 {object} utils.APIError
+// @Failure      500 {object} utils.APIError
+// @Router       /v1/core/interactions/batch [post]
 func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {
 		return utils.Unauthorized("Missing tenant context")
 	}
-
 	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
 	if err != nil {
 		return utils.Unauthorized("Invalid tenant ID format")
@@ -1109,66 +1109,221 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 		return utils.BadRequest("Invalid request payload", err.Error())
 	}
 
-	if err := utils.Validator.Struct(&req); err != nil {
-		return utils.BadRequest("Validation failed", err.Error())
+	// Spec-exact batch size error
+	if len(req.Interactions) > 100 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":          "validation_error",
+			"message":        "Batch size exceeds maximum of 100 interactions",
+			"provided_count": len(req.Interactions),
+			"max_count":      100,
+		})
 	}
-
 	if len(req.Interactions) == 0 {
-		return utils.BadRequest("Empty interactions list", "")
+		return utils.BadRequest("Field 'interactions' must contain at least one item")
 	}
 
 	ctx := c.Context()
+	now := time.Now().UTC()
+
+	// ── Phase 1: Per-item pre-validation (all must pass before any insert) ──
+	type resolvedItem struct {
+		item       payload.InteractionLogRequest
+		occurredAt time.Time
+	}
+	resolved := make([]resolvedItem, 0, len(req.Interactions))
+
+	for i, item := range req.Interactions {
+		// Struct-level validation
+		if err := utils.Validator.Struct(&item); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error":   "validation_error",
+				"message": fmt.Sprintf("Validation failed for interaction at index %d", i),
+				"index":   i,
+				"reason":  err.Error(),
+			})
+		}
+
+		// Metadata 50KB check
+		metaSize, err := item.MetadataByteSize()
+		if err != nil || metaSize > 50*1024 {
+			reason := "Field 'metadata' exceeds maximum size of 50KB"
+			if err != nil {
+				reason = "Field 'metadata' contains invalid JSON"
+			}
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error":   "validation_error",
+				"message": fmt.Sprintf("Validation failed for interaction at index %d", i),
+				"index":   i,
+				"field":   "metadata",
+				"reason":  reason,
+			})
+		}
+
+		// occurred_at range validation
+		occurredAt := now
+		if item.OccurredAt != nil {
+			ts := item.OccurredAt.UTC()
+			if ts.After(now) {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error":          "validation_error",
+					"message":        fmt.Sprintf("Validation failed for interaction at index %d", i),
+					"index":          i,
+					"field":          "occurred_at",
+					"reason":         "Field 'occurred_at' cannot be in the future",
+					"provided_value": ts.Format(time.RFC3339),
+				})
+			}
+			if ts.Before(now.AddDate(-1, 0, 0)) {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error":          "validation_error",
+					"message":        fmt.Sprintf("Validation failed for interaction at index %d", i),
+					"index":          i,
+					"field":          "occurred_at",
+					"reason":         "Field 'occurred_at' cannot be more than 1 year in the past",
+					"provided_value": ts.Format(time.RFC3339),
+				})
+			}
+			occurredAt = ts
+		}
+		resolved = append(resolved, resolvedItem{item, occurredAt})
+	}
+
+	// ── Phase 2: Bulk entity existence check ────────────────────────────────
+	// Collect unique entity IDs to validate in one query
+	entityIDSet := make(map[string]struct{})
+	for _, r := range resolved {
+		entityIDSet[r.item.EntityID] = struct{}{}
+	}
+	uniqueEntityIDs := make([]string, 0, len(entityIDSet))
+	for id := range entityIDSet {
+		uniqueEntityIDs = append(uniqueEntityIDs, id)
+	}
+
+	existingEntitiesRows, err := h.DB.Query(ctx, `
+		SELECT id::text FROM entities
+		WHERE id = ANY($1::uuid[]) AND tenant_id = $2 AND deleted_at IS NULL
+	`, uniqueEntityIDs, tenantID)
+	if err != nil {
+		return utils.InternalServerError("Failed to verify entities", err.Error())
+	}
+	existingEntities := make(map[string]struct{})
+	for existingEntitiesRows.Next() {
+		var id string
+		if err := existingEntitiesRows.Scan(&id); err != nil {
+			existingEntitiesRows.Close()
+			return utils.InternalServerError("Failed to scan entity ID", err.Error())
+		}
+		existingEntities[id] = struct{}{}
+	}
+	existingEntitiesRows.Close()
+
+	for i, r := range resolved {
+		if _, ok := existingEntities[r.item.EntityID]; !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error":     "not_found",
+				"message":   fmt.Sprintf("Entity at index %d not found or does not belong to your account", i),
+				"index":     i,
+				"entity_id": r.item.EntityID,
+			})
+		}
+	}
+
+	// ── Phase 3: external_ref deduplication (per-item, skip not fail) ───────
+	type insertItem struct {
+		resolved   resolvedItem
+		existingID string // non-empty if already exists
+	}
+	items := make([]insertItem, len(resolved))
+	for i, r := range resolved {
+		items[i] = insertItem{resolved: r}
+		if r.item.ExternalRef != nil && *r.item.ExternalRef != "" {
+			var existingID string
+			var existingCreatedAt time.Time
+			dupErr := h.DB.QueryRow(ctx, `
+				SELECT id, created_at FROM interactions
+				WHERE tenant_id = $1 AND api = $2 AND external_ref = $3
+				LIMIT 1
+			`, tenantID, r.item.API, *r.item.ExternalRef).Scan(&existingID, &existingCreatedAt)
+			if dupErr == nil {
+				items[i].existingID = existingID
+			} else if !strings.Contains(dupErr.Error(), "no rows") {
+				return utils.InternalServerError("Failed to check for duplicate interaction", dupErr.Error())
+			}
+		}
+	}
+
+	// ── Phase 4: Single-transaction multi-row INSERT (non-duplicates only) ──
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
 		return utils.InternalServerError("Failed to start transaction", err.Error())
 	}
 	defer tx.Rollback(ctx)
 
-	// Build multi-row INSERT query
+	// Map index in resolved list → returned ID (duplicate or newly inserted)
+	resultIDs := make([]string, len(items))
+
+	// Prefill duplicates
+	for i, it := range items {
+		if it.existingID != "" {
+			resultIDs[i] = it.existingID
+		}
+	}
+
+	// Build INSERT only for non-duplicate items
 	var valueStrings []string
 	var valueArgs []interface{}
+	var newItemIndexes []int // track which resolved[] positions map to this INSERT
 	argID := 1
 
-	for _, item := range req.Interactions {
-		occurredAt := time.Now().UTC()
-		if item.OccurredAt != nil {
-			occurredAt = *item.OccurredAt
+	for i, it := range items {
+		if it.existingID != "" {
+			continue // skip duplicates
 		}
-
-		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			argID, argID+1, argID+2, argID+3, argID+4, argID+5, argID+6, argID+7, argID+8, argID+9, argID+10))
-
+		r := it.resolved
+		valueStrings = append(valueStrings, fmt.Sprintf(
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			argID, argID+1, argID+2, argID+3, argID+4,
+			argID+5, argID+6, argID+7, argID+8, argID+9, argID+10,
+		))
 		valueArgs = append(valueArgs,
-			tenantID, item.EntityID, item.API, item.ActionType, item.Action,
-			item.Outcome, item.Intent, item.AgentID, item.ExternalRef, item.Metadata, occurredAt,
+			tenantID, r.item.EntityID, r.item.API, r.item.ActionType, r.item.Action,
+			r.item.Outcome, r.item.Intent, r.item.AgentID, r.item.ExternalRef,
+			r.item.Metadata, r.occurredAt,
 		)
+		newItemIndexes = append(newItemIndexes, i)
 		argID += 11
 	}
 
-	insertQuery := fmt.Sprintf(`
-		INSERT INTO interactions (tenant_id, entity_id, api, action_type, action, outcome, intent, agent_id, external_ref, metadata, occurred_at)
-		VALUES %s
-		RETURNING id
-	`, strings.Join(valueStrings, ","))
+	newlyInserted := 0
+	if len(valueStrings) > 0 {
+		insertQuery := fmt.Sprintf(`
+			INSERT INTO interactions
+			  (tenant_id, entity_id, api, action_type, action, outcome,
+			   intent, agent_id, external_ref, metadata, occurred_at)
+			VALUES %s
+			RETURNING id
+		`, strings.Join(valueStrings, ","))
 
-	rows, err := tx.Query(ctx, insertQuery, valueArgs...)
-	if err != nil {
-		return utils.InternalServerError("Failed to log batch interactions", err.Error())
-	}
-	defer rows.Close()
-
-	var insertedIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return utils.InternalServerError("Failed to scan returning ID", err.Error())
+		insRows, err := tx.Query(ctx, insertQuery, valueArgs...)
+		if err != nil {
+			return utils.InternalServerError("Failed to log batch interactions", err.Error())
 		}
-		insertedIDs = append(insertedIDs, id)
+		scanIdx := 0
+		for insRows.Next() {
+			var id string
+			if err := insRows.Scan(&id); err != nil {
+				insRows.Close()
+				return utils.InternalServerError("Failed to scan returning ID", err.Error())
+			}
+			resultIDs[newItemIndexes[scanIdx]] = id
+			scanIdx++
+			newlyInserted++
+		}
+		insRows.Close()
 	}
 
-	// Increment usage for the batch size
-	// Note: We run the increment N times rather than modifying the Postgres function.
-	for i := 0; i < len(req.Interactions); i++ {
+	// Increment usage only for newly inserted rows
+	for i := 0; i < newlyInserted; i++ {
 		_, err = tx.Exec(ctx, `SELECT fn_increment_usage($1, 'interaction')`, tenantID)
 		if err != nil {
 			return utils.InternalServerError("Failed to increment usage", err.Error())
@@ -1179,16 +1334,16 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 		return utils.InternalServerError("Failed to commit transaction", err.Error())
 	}
 
-	firstID := ""
-	lastID := ""
-	if len(insertedIDs) > 0 {
-		firstID = insertedIDs[0]
-		lastID = insertedIDs[len(insertedIDs)-1]
+	firstID, lastID := "", ""
+	if len(resultIDs) > 0 {
+		firstID = resultIDs[0]
+		lastID = resultIDs[len(resultIDs)-1]
 	}
 
-	return c.JSON(payload.BatchInteractionLogResponse{
-		LoggedCount: len(req.Interactions),
+	return c.Status(fiber.StatusCreated).JSON(payload.BatchInteractionLogResponse{
+		LoggedCount: len(resultIDs),
 		FirstID:     firstID,
 		LastID:      lastID,
+		LoggedAt:    time.Now().UTC(),
 	})
 }

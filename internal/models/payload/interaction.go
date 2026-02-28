@@ -38,7 +38,8 @@ type BatchInteractionLogRequest struct {
 }
 
 type BatchInteractionLogResponse struct {
-	LoggedCount int    `json:"logged_count"`
-	FirstID     string `json:"first_id"`
-	LastID      string `json:"last_id"`
+	LoggedCount int       `json:"logged_count"`
+	FirstID     string    `json:"first_id"`
+	LastID      string    `json:"last_id"`
+	LoggedAt    time.Time `json:"logged_at"`
 }

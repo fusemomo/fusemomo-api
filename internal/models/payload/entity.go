@@ -1,6 +1,9 @@
 package payload
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type EntityResponse struct {
 	ID                     string                 `json:"id"`
@@ -52,4 +55,37 @@ type EntityDeleteResponse struct {
 	EntityID   string    `json:"entity_id"`
 	Anonymized bool      `json:"anonymized"`
 	ErasedAt   time.Time `json:"erased_at"`
+}
+
+// ResolveEntityRequest is the request body for POST /v1/entities/resolve.
+type ResolveEntityRequest struct {
+	// Identifiers maps source name → identifier value.
+	Identifiers map[string]string `json:"identifiers" validate:"required,min=1"`
+	EntityType  *string           `json:"entity_type"`
+	DisplayName *string           `json:"display_name"`
+	Metadata    map[string]any    `json:"metadata"`
+}
+
+// MetadataBytes returns the JSON-encoded size of Metadata for validation.
+func (r *ResolveEntityRequest) MetadataBytes() (int, error) {
+	if r.Metadata == nil {
+		return 0, nil
+	}
+	b, err := json.Marshal(r.Metadata)
+	return len(b), err
+}
+
+// ResolveEntityResponse is the success body for POST /v1/entities/resolve.
+type ResolveEntityResponse struct {
+	EntityID               string             `json:"entity_id"`
+	Identifiers            []EntityIdentifier `json:"identifiers"`
+	EntityType             *string            `json:"entity_type"`
+	DisplayName            *string            `json:"display_name"`
+	TotalInteractions      int                `json:"total_interactions"`
+	SuccessfulInteractions int                `json:"successful_interactions"`
+	LastInteractionAt      *time.Time         `json:"last_interaction_at"`
+	PreferredActionType    *string            `json:"preferred_action_type"`
+	BehavioralScore        *float64           `json:"behavioral_score"`
+	Metadata               map[string]any     `json:"metadata"`
+	CreatedAt              time.Time          `json:"created_at"`
 }

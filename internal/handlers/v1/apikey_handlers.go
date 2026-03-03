@@ -258,7 +258,7 @@ func (h *Handler) DeleteAPIkeysForAgentsHandler(c fiber.Ctx) error {
 // @Failure      401  {object}  utils.APIError
 // @Failure      404  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /dashboard/api-keys/{id} [delete]
+// @Router       /app/key/{id}/revoke [post]
 func (h *Handler) RevokeAPIKeyHandler(c fiber.Ctx) error {
 	keyID := c.Params("id")
 	if keyID == "" {

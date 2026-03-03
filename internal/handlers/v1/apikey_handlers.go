@@ -103,7 +103,7 @@ func (h *Handler) CreateAPIkeysForAgentsHandler(c fiber.Ctx) error {
 }
 
 // GetAPIKeysHandler godoc
-// @Summary List API keys
+// @Summary List All API keys which have status active
 // @Description Fetch all active API keys for the authenticated tenant
 // @Tags API_key
 // @Produce json

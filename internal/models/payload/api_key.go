@@ -23,9 +23,8 @@ type DeleteAPIKeyRequest struct {
 type APIKeyInfo struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
-	KeyPrefix  string     `json:"key_prefix"`
+	KeyHash    string     `json:"key_hash"`
 	Status     string     `json:"status"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
 }

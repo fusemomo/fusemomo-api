@@ -63,6 +63,9 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	apiKey.Post("/sync-expired", h.SyncExpiredAPIKeysHandler)
 	apiKey.Post("/:id/revoke", h.RevokeAPIKeyHandler)
 
+	dashboard.Delete("", h.DeleteTenantProfileHandler)
+	dashboard.Get("/profile", h.GetProfileHandler)
+	dashboard.Patch("/profile", h.UpdateTenantProfileHandler)
 	dashboard.Get("/usage", h.GetMonthlyUsageHandler)
 	dashboard.Get("/usage/history", h.GetHistoricalUsageHandler)
 

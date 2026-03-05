@@ -25,7 +25,7 @@ func (s *FiberServer) RegisterFiberRoutes() error {
 }
 
 func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
-	apiV1 := s.App.Group("/api/v1")
+	apiV1 := s.App.Group("/v1")
 
 	// Dashboard routes require user authentication via Supabase JWT
 	app := apiV1.Group(

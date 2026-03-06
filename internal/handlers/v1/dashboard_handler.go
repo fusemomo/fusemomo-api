@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"fusemomo-api/internal/models/payload"
 	"fusemomo-api/internal/utils"
+	"math"
+	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 // GetProfileHandler godoc
@@ -355,4 +358,338 @@ func (h *Handler) GetHistoricalUsageHandler(c fiber.Ctx) error {
 	}
 
 	return c.JSON(resp)
+}
+
+// GetRecommendationsHandler godoc
+// @Summary List recommendations
+// @Description Fetch paginated recommendations for the authenticated tenant
+// @Tags Dashboard
+// @Produce json
+// @Param page query int false "Page number (default: 1)"
+// @Param limit query int false "Page size (default: 50, max: 100)"
+// @Param status query string false "Filter: all | followed | not_followed"
+// @Param date_from query string false "YYYY-MM-DD (default: 30 days ago)"
+// @Param date_to query string false "YYYY-MM-DD (default: today)"
+// @Param sort query string false "Sort field: created_at | confidence_score"
+// @Param order query string false "Sort order: asc | desc"
+// @Success 200 {object} payload.GetRecommendationsResponse
+// @Failure 400 {object} utils.APIError
+// @Failure 401 {object} utils.APIError
+// @Failure 500 {object} utils.APIError
+// @Router /dashboard/recommendations [get]
+func (h *Handler) GetRecommendationsHandler(c fiber.Ctx) error {
+	tenantID, err := tenantIDFromCtx(c)
+	if err != nil {
+		return err
+	}
+
+	// ── Parse & validate query params ─
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(c.Query("limit", "50"))
+	if limit < 1 || limit > 100 {
+		limit = 50
+	}
+	offset := (page - 1) * limit
+
+	statusFilter := c.Query("status", "")
+
+	sortField := c.Query("sort", "created_at")
+	if sortField != "created_at" && sortField != "confidence_score" {
+		sortField = "created_at"
+	}
+	sortOrder := c.Query("order", "desc")
+	if sortOrder != "asc" && sortOrder != "desc" {
+		sortOrder = "desc"
+	}
+
+	// Validate and default date range (YYYY-MM-DD format enforced).
+	now := time.Now().UTC()
+	dateFrom, dateTo, err := parseDateRange(
+		c.Query("date_from", ""),
+		c.Query("date_to", ""),
+		now,
+	)
+	if err != nil {
+		return utils.BadRequest("Invalid date format: use YYYY-MM-DD", err.Error())
+	}
+
+	ctx := c.Context()
+
+	// ── Build parameterised WHERE clause
+	// Base args: $1=tenant_id  $2=dateFrom  $3=dateTo
+	baseArgs := []any{tenantID, dateFrom + " 00:00:00", dateTo + " 23:59:59"}
+	argIdx := 4 // next positional arg index
+
+	statusClause := ""
+	switch statusFilter {
+	case "followed":
+		statusClause = fmt.Sprintf(" AND r.was_followed = $%d", argIdx)
+		baseArgs = append(baseArgs, true)
+		argIdx++
+	case "not_followed":
+		statusClause = fmt.Sprintf(" AND r.was_followed = $%d", argIdx)
+		baseArgs = append(baseArgs, false)
+		argIdx++
+	}
+
+	// ── Count total (shared args, no extra params)
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM recommendations r
+		JOIN entities e ON e.id = r.entity_id
+		WHERE r.tenant_id = $1
+		  AND r.created_at >= $2
+		  AND r.created_at <= $3
+		%s
+	`, statusClause)
+
+	var total int64
+	if err := h.DB.QueryRow(ctx, countQuery, baseArgs...).Scan(&total); err != nil {
+		return utils.InternalServerError("Failed to count recommendations", err.Error())
+	}
+
+	// ── Fetch page — copy baseArgs to avoid aliasing from the append above ─
+	listArgs := make([]any, len(baseArgs), len(baseArgs)+2)
+	copy(listArgs, baseArgs)
+	listArgs = append(listArgs, limit, offset)
+
+	listQuery := fmt.Sprintf(`
+		SELECT
+			r.id,
+			r.entity_id,
+			COALESCE(e.display_name, 'Unknown') AS entity_display_name,
+			r.intent,
+			r.recommended_action_type,
+			r.confidence_score,
+			r.was_followed,
+			i.outcome::text,
+			r.agent_id,
+			r.created_at
+		FROM recommendations r
+		JOIN entities e ON e.id = r.entity_id
+		LEFT JOIN interactions i ON i.id = r.outcome_interaction_id
+		WHERE r.tenant_id = $1
+		  AND r.created_at >= $2
+		  AND r.created_at <= $3
+		%s
+		ORDER BY r.%s %s
+		LIMIT $%d OFFSET $%d
+	`, statusClause, sortField, sortOrder, argIdx, argIdx+1)
+
+	rows, err := h.DB.Query(ctx, listQuery, listArgs...)
+	if err != nil {
+		return utils.InternalServerError("Failed to fetch recommendations", err.Error())
+	}
+	defer rows.Close()
+
+	recs := make([]payload.DashboardRecommendationRow, 0, 50)
+	for rows.Next() {
+		var rec payload.DashboardRecommendationRow
+		if err := rows.Scan(
+			&rec.ID,
+			&rec.EntityID,
+			&rec.EntityDisplayName,
+			&rec.Intent,
+			&rec.RecommendedActionType,
+			&rec.ConfidenceScore,
+			&rec.WasFollowed,
+			&rec.Outcome,
+			&rec.AgentID,
+			&rec.CreatedAt,
+		); err != nil {
+			return utils.InternalServerError("Failed to scan recommendation row", err.Error())
+		}
+		recs = append(recs, rec)
+	}
+	// Always check rows.Err() — a mid-stream network failure would not surface otherwise.
+	if err := rows.Err(); err != nil {
+		return utils.InternalServerError("Error reading recommendation rows", err.Error())
+	}
+
+	return c.JSON(payload.GetRecommendationsResponse{
+		Recommendations: recs,
+		Total:           total,
+		Limit:           limit,
+		Offset:          offset,
+		Page:            page,
+	})
+}
+
+// GetRecommendationStatsHandler godoc
+// @Summary Recommendation aggregate stats
+// @Description Get aggregate metrics for recommendation metrics cards
+// @Tags Dashboard
+// @Produce json
+// @Param date_from query string false "YYYY-MM-DD (default: 30 days ago)"
+// @Param date_to query string false "YYYY-MM-DD (default: today)"
+// @Success 200 {object} payload.GetRecommendationStatsResponse
+// @Failure 400 {object} utils.APIError
+// @Failure 401 {object} utils.APIError
+// @Failure 500 {object} utils.APIError
+// @Router /dashboard/recommendations/stats [get]
+func (h *Handler) GetRecommendationStatsHandler(c fiber.Ctx) error {
+	tenantID, err := tenantIDFromCtx(c)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	dateFrom, dateTo, err := parseDateRange(
+		c.Query("date_from", ""),
+		c.Query("date_to", ""),
+		now,
+	)
+	if err != nil {
+		return utils.BadRequest("Invalid date format: use YYYY-MM-DD", err.Error())
+	}
+
+	ctx := c.Context()
+	tsFrom := dateFrom + " 00:00:00"
+	tTo := dateTo + " 23:59:59"
+
+	// ── Run the three independent aggregate queries concurrently ─
+	var (
+		totalServed, totalFollowed int64
+		followThroughRate          float64
+		successWhenFollowed        float64
+		baselineSuccessRate        float64
+	)
+
+	g, gCtx := errgroup.WithContext(ctx)
+
+	// 1. Total served & follow-through rate
+	g.Go(func() error {
+		return h.DB.QueryRow(gCtx, `
+			SELECT
+				COUNT(*),
+				COUNT(*) FILTER (WHERE was_followed = true),
+				COALESCE(
+					COUNT(*) FILTER (WHERE was_followed = true)::float / NULLIF(COUNT(*), 0),
+					0
+				)
+			FROM recommendations
+			WHERE tenant_id = $1
+			  AND created_at >= $2
+			  AND created_at <= $3
+		`, tenantID, tsFrom, tTo).Scan(&totalServed, &totalFollowed, &followThroughRate)
+	})
+
+	// 2. Success rate when the recommendation was followed
+	g.Go(func() error {
+		return h.DB.QueryRow(gCtx, `
+			SELECT
+				COALESCE(
+					COUNT(*) FILTER (WHERE i.outcome = 'success')::float /
+					NULLIF(COUNT(*) FILTER (WHERE r.was_followed = true), 0),
+					0
+				)
+			FROM recommendations r
+			LEFT JOIN interactions i ON i.id = r.outcome_interaction_id
+			WHERE r.tenant_id = $1
+			  AND r.was_followed = true
+			  AND r.created_at >= $2
+			  AND r.created_at <= $3
+		`, tenantID, tsFrom, tTo).Scan(&successWhenFollowed)
+	})
+
+	// 3. Tenant-wide baseline success rate (for delta comparison)
+	g.Go(func() error {
+		return h.DB.QueryRow(gCtx, `
+			SELECT
+				COALESCE(
+					COUNT(*) FILTER (WHERE outcome = 'success')::float / NULLIF(COUNT(*), 0),
+					0
+				)
+			FROM interactions
+			WHERE tenant_id = $1
+		`, tenantID).Scan(&baselineSuccessRate)
+	})
+
+	if err := g.Wait(); err != nil {
+		return utils.InternalServerError("Failed to fetch recommendation stats", err.Error())
+	}
+
+	improvementVsBaseline := math.Round((successWhenFollowed-baselineSuccessRate)*1000) / 10 // percentage points
+
+	// ── Trend metrics (best-effort: errors are non-fatal)
+	today := now.Format("2006-01-02")
+	thisWeekStart := now.AddDate(0, 0, -7).Format("2006-01-02")
+	prevWeekStart := now.AddDate(0, 0, -14).Format("2006-01-02")
+	prevWeekEnd := now.AddDate(0, 0, -7).Format("2006-01-02")
+
+	var servedToday int
+	var thisWeekFT, prevWeekFT float64
+
+	tg, tCtx := errgroup.WithContext(ctx)
+	tg.Go(func() error {
+		return h.DB.QueryRow(tCtx,
+			`SELECT COUNT(*) FROM recommendations WHERE tenant_id=$1 AND created_at >= $2`,
+			tenantID, today+" 00:00:00").Scan(&servedToday)
+	})
+	tg.Go(func() error {
+		return h.DB.QueryRow(tCtx,
+			`SELECT COALESCE(COUNT(*) FILTER (WHERE was_followed=true)::float / NULLIF(COUNT(*),0), 0)
+			  FROM recommendations WHERE tenant_id=$1 AND created_at >= $2 AND created_at <= $3`,
+			tenantID, thisWeekStart+" 00:00:00", today+" 23:59:59").Scan(&thisWeekFT)
+	})
+	tg.Go(func() error {
+		return h.DB.QueryRow(tCtx,
+			`SELECT COALESCE(COUNT(*) FILTER (WHERE was_followed=true)::float / NULLIF(COUNT(*),0), 0)
+			  FROM recommendations WHERE tenant_id=$1 AND created_at >= $2 AND created_at <= $3`,
+			tenantID, prevWeekStart+" 00:00:00", prevWeekEnd+" 23:59:59").Scan(&prevWeekFT)
+	})
+	// Trends are best-effort: a trend query error degrades gracefully (returns 0 values).
+	_ = tg.Wait()
+
+	return c.JSON(payload.GetRecommendationStatsResponse{
+		TotalServed:           totalServed,
+		TotalFollowed:         totalFollowed,
+		FollowThroughRate:     followThroughRate,
+		SuccessWhenFollowed:   successWhenFollowed,
+		BaselineSuccessRate:   baselineSuccessRate,
+		ImprovementVsBaseline: improvementVsBaseline,
+		Trends: payload.RecommendationTrends{
+			ServedToday:             servedToday,
+			FollowThroughChangeWeek: math.Round((thisWeekFT-prevWeekFT)*1000) / 10,
+			SuccessChangeWeek:       0, // extend in a future iteration
+		},
+	})
+}
+
+// ── Shared handler helpers ─
+
+// tenantIDFromCtx extracts and parses the tenant UUID set by SupabaseJWTMiddleware.
+func tenantIDFromCtx(c fiber.Ctx) (uuid.UUID, error) {
+	v := c.Locals("tenant_id")
+	if v == nil {
+		return uuid.Nil, utils.Unauthorized("Tenant ID not found in context")
+	}
+	id, err := uuid.Parse(fmt.Sprintf("%v", v))
+	if err != nil {
+		return uuid.Nil, utils.Unauthorized("Invalid tenant ID format")
+	}
+	return id, nil
+}
+
+// parseDateRange validates optional YYYY-MM-DD query params and returns UTC defaults.
+func parseDateRange(from, to string, now time.Time) (string, string, error) {
+	const layout = "2006-01-02"
+	if from != "" {
+		if _, err := time.Parse(layout, from); err != nil {
+			return "", "", fmt.Errorf("date_from %q: %w", from, err)
+		}
+	} else {
+		from = now.AddDate(0, 0, -30).Format(layout)
+	}
+	if to != "" {
+		if _, err := time.Parse(layout, to); err != nil {
+			return "", "", fmt.Errorf("date_to %q: %w", to, err)
+		}
+	} else {
+		to = now.Format(layout)
+	}
+	return from, to, nil
 }

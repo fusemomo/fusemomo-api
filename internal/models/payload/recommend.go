@@ -48,3 +48,48 @@ type RecommendResponse struct {
 	SampleSize            int64              `json:"sample_size"`
 	LookbackDays          int                `json:"lookback_days"`
 }
+
+// ─── Dashboard Recommendation List ──
+
+// DashboardRecommendationRow is one row in the dashboard recommendation list.
+type DashboardRecommendationRow struct {
+	ID                    string    `json:"id"`
+	EntityID              string    `json:"entity_id"`
+	EntityDisplayName     string    `json:"entity_display_name"`
+	Intent                string    `json:"intent"`
+	RecommendedActionType string    `json:"recommended_action_type"`
+	ConfidenceScore       float64   `json:"confidence_score"`
+	WasFollowed           *bool     `json:"was_followed"`
+	Outcome               *string   `json:"outcome"`
+	AgentID               *string   `json:"agent_id"`
+	CreatedAt             time.Time `json:"created_at"`
+}
+
+// GetRecommendationsResponse is the response for GET /dashboard/recommendations.
+type GetRecommendationsResponse struct {
+	Recommendations []DashboardRecommendationRow `json:"recommendations"`
+	Total           int64                        `json:"total"`
+	Limit           int                          `json:"limit"`
+	Offset          int                          `json:"offset"`
+	Page            int                          `json:"page"`
+}
+
+// ─── Dashboard Recommendation Stats ─
+
+// RecommendationTrends holds daily/weekly trend metrics.
+type RecommendationTrends struct {
+	ServedToday             int     `json:"served_today"`
+	FollowThroughChangeWeek float64 `json:"follow_through_change_week"`
+	SuccessChangeWeek       float64 `json:"success_change_week"`
+}
+
+// GetRecommendationStatsResponse is the response for GET /dashboard/recommendations/stats.
+type GetRecommendationStatsResponse struct {
+	TotalServed           int64                `json:"total_served"`
+	TotalFollowed         int64                `json:"total_followed"`
+	FollowThroughRate     float64              `json:"follow_through_rate"`
+	SuccessWhenFollowed   float64              `json:"success_when_followed"`
+	BaselineSuccessRate   float64              `json:"baseline_success_rate"`
+	ImprovementVsBaseline float64              `json:"improvement_vs_baseline"`
+	Trends                RecommendationTrends `json:"trends"`
+}

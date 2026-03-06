@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -67,18 +69,36 @@ func SupabaseJWTMiddleware(db *pgxpool.Pool) fiber.Handler {
 			return utils.Unauthorized("Missing user ID in token")
 		}
 
-		// Single DB call: fetch tenant_id, role, and plan together..
+		// Single DB call: fetch tenant_id, role, and plan together.
+		// On first signup, the handle_new_user trigger may not have committed yet
+		// (Supabase issues the JWT before the trigger finishes). Retry up to 3 times
+		// with a 1-second delay to handle this race condition gracefully.
 		var (
 			tenantID string
 			role     string
 			plan     string
 		)
-		err = db.QueryRow(c.Context(),
-			`SELECT id, role, plan FROM tenants WHERE auth_user_id = $1`,
-			authUserID,
-		).Scan(&tenantID, &role, &plan)
-
-		if err != nil {
+		const maxRetries = 3
+		const retryDelay = 800 * time.Millisecond
+		var tenantErr error
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			tenantErr = db.QueryRow(c.Context(),
+				`SELECT id, role, plan FROM tenants WHERE auth_user_id = $1 AND deleted_at IS NULL`,
+				authUserID,
+			).Scan(&tenantID, &role, &plan)
+			if tenantErr == nil {
+				break
+			}
+			// Only retry on "no rows" — use errors.Is for type-safe pgx v5 check.
+			// A genuine DB error (connection refused, etc.) should fail immediately.
+			if !errors.Is(tenantErr, pgx.ErrNoRows) {
+				break
+			}
+			if attempt < maxRetries-1 {
+				time.Sleep(retryDelay)
+			}
+		}
+		if tenantErr != nil {
 			return utils.Unauthorized("Tenant not found")
 		}
 

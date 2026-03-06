@@ -68,6 +68,8 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	dashboard.Patch("/profile", h.UpdateTenantProfileHandler)
 	dashboard.Get("/usage", h.GetMonthlyUsageHandler)
 	dashboard.Get("/usage/history", h.GetHistoricalUsageHandler)
+	dashboard.Get("/recommendations", h.GetRecommendationsHandler)
+	dashboard.Get("/recommendations/stats", h.GetRecommendationStatsHandler)
 
 	admin.Get("/tenants", h.GetAdminTenantsHandler)
 	admin.Patch("/tenants/:id/plan", h.UpdateAdminTenantPlanHandler)

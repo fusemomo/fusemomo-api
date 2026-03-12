@@ -123,7 +123,7 @@ func (h *Handler) GetAPIKeysHandler(c fiber.Ctx) error {
 	}
 
 	query := `
-		SELECT id, name, key_hash, status, last_used_at, expires_at 
+		SELECT id, name, key_prefix, status::text, last_used_at, expires_at 
 		FROM api_keys 
 		WHERE tenant_id = $1 AND status = 'active'
 		ORDER BY created_at DESC
@@ -138,7 +138,7 @@ func (h *Handler) GetAPIKeysHandler(c fiber.Ctx) error {
 	var apiKeys []payload.APIKeyInfo
 	for rows.Next() {
 		var k payload.APIKeyInfo
-		err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Status, &k.LastUsedAt, &k.ExpiresAt)
+		err := rows.Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.Status, &k.LastUsedAt, &k.ExpiresAt)
 		if err != nil {
 			return utils.InternalServerError("Failed to scan API key", err.Error())
 		}
@@ -173,7 +173,7 @@ func (h *Handler) ListAllAPIKeysHandler(c fiber.Ctx) error {
 	}
 
 	query := `
-		SELECT id, name, key_hash, status, last_used_at, expires_at 
+		SELECT id, name, key_prefix, status::text, last_used_at, expires_at 
 		FROM api_keys 
 		WHERE tenant_id = $1
 		ORDER BY created_at DESC
@@ -188,7 +188,7 @@ func (h *Handler) ListAllAPIKeysHandler(c fiber.Ctx) error {
 	var apiKeys []payload.APIKeyInfo
 	for rows.Next() {
 		var k payload.APIKeyInfo
-		err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Status, &k.LastUsedAt, &k.ExpiresAt)
+		err := rows.Scan(&k.ID, &k.Name, &k.KeyPrefix, &k.Status, &k.LastUsedAt, &k.ExpiresAt)
 		if err != nil {
 			return utils.InternalServerError("Failed to scan API key", err.Error())
 		}

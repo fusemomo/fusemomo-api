@@ -123,7 +123,7 @@ func (h *Handler) GetAPIKeysHandler(c fiber.Ctx) error {
 	}
 
 	query := `
-		SELECT id, name, key_prefix, status, last_used_at, expires_at 
+		SELECT id, name, key_prefix, status::text, last_used_at, expires_at 
 		FROM api_keys 
 		WHERE tenant_id = $1 AND status = 'active'
 		ORDER BY created_at DESC
@@ -173,7 +173,7 @@ func (h *Handler) ListAllAPIKeysHandler(c fiber.Ctx) error {
 	}
 
 	query := `
-		SELECT id, name, key_prefix, status, last_used_at, expires_at 
+		SELECT id, name, key_prefix, status::text, last_used_at, expires_at 
 		FROM api_keys 
 		WHERE tenant_id = $1
 		ORDER BY created_at DESC

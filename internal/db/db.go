@@ -8,6 +8,7 @@ import (
 
 	"fusemomo-api/internal/config"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,8 +22,15 @@ func GetPool() *pgxpool.Pool {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		var err error
-		pool, err = pgxpool.New(ctx, config.Envs.DATABASE_URL)
+		poolConfig, err := pgxpool.ParseConfig(config.Envs.DATABASE_URL)
+		if err != nil {
+			log.Fatalf("Unable to parse DATABASE_URL: %v\n", err)
+		}
+		
+		// Disable prepared statement cache to fix PgBouncer (Supabase) transaction pooling collisions
+		poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+
+		pool, err = pgxpool.NewWithConfig(ctx, poolConfig)
 		if err != nil {
 			log.Fatalf("Unable to connect to database: %v\n", err)
 		}

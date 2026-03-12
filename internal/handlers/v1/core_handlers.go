@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -53,7 +54,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		return utils.Unauthorized("Invalid tenant ID format")
 	}
 
-	// ── 1. Parse & validate request ────────────────────────────────────────
+	// ── 1. Parse & validate request
 	var req payload.ResolveEntityRequest
 	if err := c.Bind().JSON(&req); err != nil {
 		return utils.BadRequest("Invalid request payload", err.Error())
@@ -104,7 +105,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 
 	ctx := c.Context()
 
-	// ── 2. Rate limit check ─────────────────────────────────────────────────
+	// ── 2. Rate limit check
 	// Fetch the tenant's monthly resolution limit and current usage in one query.
 	var monthlyLimit int
 	var currentUsage int
@@ -136,7 +137,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		})
 	}
 
-	// ── 3. Resolve within a transaction ────────────────────────────────────
+	// ── 3. Resolve within a transaction
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
 		return utils.InternalServerError("Failed to start transaction", err.Error())
@@ -191,7 +192,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 
 	switch len(matchedEntityIDs) {
 
-	// ── Case A: New entity ──────────────────────────────────────────────────
+	// ── Case A: New entity
 	case 0:
 		insertEntitySQL := `
 			INSERT INTO entities (tenant_id, display_name, entity_type, metadata)
@@ -220,7 +221,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 			}
 		}
 
-	// ── Case B: Single match — link any new identifiers ────────────────────
+	// ── Case B: Single match — link any new identifiers
 	case 1:
 		canonicalID = matchedEntityIDs[0]
 		// Upsert any incoming identifiers not yet linked to this entity
@@ -256,7 +257,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 			}
 		}
 
-	// ── Case C: Multiple matches — merge ────────────────────────────────────
+	// ── Case C: Multiple matches — merge
 	default:
 		// Pick the entity with the earliest created_at as canonical
 		pickCanonicalSQL := `
@@ -337,7 +338,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		}
 	}
 
-	// ── 4. Increment usage counter ──────────────────────────────────────────
+	// ── 4. Increment usage counter
 	_, err = tx.Exec(ctx, `SELECT fn_increment_usage($1, 'resolution')`, tenantID)
 	if err != nil {
 		return utils.InternalServerError("Failed to increment usage", err.Error())
@@ -347,7 +348,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		return utils.InternalServerError("Failed to commit transaction", err.Error())
 	}
 
-	// ── 5. Fetch resolved entity and return ────────────────────────────────
+	// ── 5. Fetch resolved entity and return
 	var resp payload.ResolveEntityResponse
 	entityQuery := `
 		SELECT id, display_name, entity_type, total_interactions, successful_interactions,
@@ -433,7 +434,7 @@ func (h *Handler) LinkEntityManuallyHandler(c fiber.Ctx) error {
 		return utils.BadRequest("Invalid Entity ID format", err.Error())
 	}
 
-	// ── 1. Parse & validate request ────────────────────────────────────────
+	// ── 1. Parse & validate request
 	var req payload.LinkIdentifiersRequest
 	if err := c.Bind().JSON(&req); err != nil {
 		return utils.BadRequest("Invalid request payload", err.Error())
@@ -489,7 +490,7 @@ func (h *Handler) LinkEntityManuallyHandler(c fiber.Ctx) error {
 
 	ctx := c.Context()
 
-	// ── 2. Verify entity exists and belongs to tenant ──────────────────────
+	// ── 2. Verify entity exists and belongs to tenant
 	var exists bool
 	err = h.DB.QueryRow(ctx, `
 		SELECT EXISTS(
@@ -508,7 +509,7 @@ func (h *Handler) LinkEntityManuallyHandler(c fiber.Ctx) error {
 		})
 	}
 
-	// ── 3. Check for conflicts on OTHER entities ───────────────────────────
+	// ── 3. Check for conflicts on OTHER entities
 	inValues := make([]string, 0, len(req.Identifiers))
 	for _, v := range req.Identifiers {
 		inValues = append(inValues, v)
@@ -561,7 +562,7 @@ func (h *Handler) LinkEntityManuallyHandler(c fiber.Ctx) error {
 		})
 	}
 
-	// ── 4. Insert new identifiers (skip already-linked ones) ──────────────
+	// ── 4. Insert new identifiers (skip already-linked ones)
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
 		return utils.InternalServerError("Failed to start transaction", err.Error())
@@ -586,7 +587,7 @@ func (h *Handler) LinkEntityManuallyHandler(c fiber.Ctx) error {
 		return utils.InternalServerError("Failed to commit transaction", err.Error())
 	}
 
-	// ── 5. Fetch all identifiers and return ───────────────────────────────
+	// ── 5. Fetch all identifiers and return
 	idRows, err := h.DB.Query(ctx, `
 		SELECT id, source, identifier_type, identifier_value, confidence, link_strategy::text, verified_at
 		FROM entity_identifiers
@@ -712,7 +713,7 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 	whereClause := "WHERE " + strings.Join(whereClauses, " AND ")
 
 	ctx := c.Context()
-	var total int
+	var total int64
 	var entities []payload.EntityResponse
 
 	g, gCtx := errgroup.WithContext(ctx)
@@ -731,7 +732,7 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 		query := fmt.Sprintf(`
 			SELECT e.id, e.tenant_id, e.display_name, e.entity_type, e.total_interactions, 
 			       e.successful_interactions, e.last_interaction_at, e.preferred_action_type, 
-			       e.behavioral_score, e.metadata, e.created_at, e.updated_at
+			       e.behavioral_score, e.metadata::text, e.created_at, e.updated_at
 			FROM entities e
 			%s
 			ORDER BY %s %s NULLS LAST
@@ -741,7 +742,7 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 		fetchArgs := make([]interface{}, len(args), len(args)+2)
 		copy(fetchArgs, args)
 		fetchArgs = append(fetchArgs, limit, offset)
-		
+
 		rows, err := h.DB.Query(gCtx, query, fetchArgs...)
 		if err != nil {
 			return fmt.Errorf("fetch_query: %w", err)
@@ -751,13 +752,23 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 		for rows.Next() {
 			var e payload.EntityResponse
 			var displayName, entityType, preferredAction *string
+			var metadataBytes []byte
 
 			if err := rows.Scan(
 				&e.ID, &e.TenantID, &displayName, &entityType, &e.TotalInteractions,
 				&e.SuccessfulInteractions, &e.LastInteractionAt, &preferredAction,
-				&e.BehavioralScore, &e.Metadata, &e.CreatedAt, &e.UpdatedAt,
+				&e.BehavioralScore, &metadataBytes, &e.CreatedAt, &e.UpdatedAt,
 			); err != nil {
 				return fmt.Errorf("scan_row: %w", err)
+			}
+
+			if len(metadataBytes) > 0 {
+				e.Metadata = make(map[string]interface{})
+				if err := json.Unmarshal(metadataBytes, &e.Metadata); err != nil {
+					return fmt.Errorf("unmarshal_metadata: %w", err)
+				}
+			} else {
+				e.Metadata = make(map[string]interface{})
 			}
 
 			if displayName != nil {
@@ -779,6 +790,7 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 	})
 
 	if err := g.Wait(); err != nil {
+		log.Printf("[GetAllEntitiesHandler] g.Wait() returned: %v\n", err)
 		return utils.InternalServerError("Failed to fetch entities", err.Error())
 	}
 
@@ -788,7 +800,7 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 
 	return c.JSON(payload.EntitiesListResponse{
 		Entities: entities,
-		Total:    total,
+		Total:    int(total),
 		Limit:    limit,
 		Offset:   offset,
 	})
@@ -834,28 +846,37 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 	var identifiers []payload.EntityIdentifier
 	var interactions []payload.InteractionSummary
 
-	// ── Step 1: Fetch core entity row first ──────────────────────────────
+	// ── Step 1: Fetch core entity row first
 	// We gate on entity existence before spawning any further DB work so that
 	// a 404 path never wastes two extra connection-pool checkouts.
 	{
 		var displayName, entityType, preferredAction *string
+		var metadataStr string
 		entityQuery := `
 			SELECT id, tenant_id, display_name, entity_type, total_interactions,
 			       successful_interactions, last_interaction_at, preferred_action_type,
-			       behavioral_score, metadata, created_at, updated_at
+			       behavioral_score, metadata::text, created_at, updated_at
 			FROM entities
 			WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 		`
 		if err := h.DB.QueryRow(ctx, entityQuery, entityID, tenantID).Scan(
 			&resp.ID, &resp.TenantID, &displayName, &entityType, &resp.TotalInteractions,
 			&resp.SuccessfulInteractions, &resp.LastInteractionAt, &preferredAction,
-			&resp.BehavioralScore, &resp.Metadata, &resp.CreatedAt, &resp.UpdatedAt,
+			&resp.BehavioralScore, &metadataStr, &resp.CreatedAt, &resp.UpdatedAt,
 		); err != nil {
 			if strings.Contains(err.Error(), "no rows") {
 				return utils.NotFound("Entity not found")
 			}
 			return utils.InternalServerError("Failed to fetch entity", err.Error())
 		}
+
+		if len(metadataStr) > 0 {
+			resp.Metadata = make(map[string]interface{})
+			json.Unmarshal([]byte(metadataStr), &resp.Metadata)
+		} else {
+			resp.Metadata = make(map[string]interface{})
+		}
+
 		if displayName != nil {
 			resp.DisplayName = *displayName
 		}
@@ -873,7 +894,7 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 
 	g.Go(func() error {
 		idQuery := `
-			SELECT id, source, identifier_type, identifier_value, confidence, link_strategy, verified_at
+			SELECT id, source, identifier_type, identifier_value, confidence, link_strategy::text, verified_at
 			FROM entity_identifiers
 			WHERE entity_id = $1 AND tenant_id = $2
 		`
@@ -924,6 +945,7 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 	})
 
 	if err := g.Wait(); err != nil {
+		log.Printf("[GetEntityHandler] g.Wait() returned: %v\n", err)
 		return utils.InternalServerError("Failed to fetch entity details", err.Error())
 	}
 
@@ -1020,7 +1042,7 @@ func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 		return utils.Unauthorized("Invalid tenant ID format")
 	}
 
-	// ── 1. Parse & validate ───────────────────────────────────────────────
+	// ── 1. Parse & validate
 	var req payload.InteractionLogRequest
 	if err := c.Bind().JSON(&req); err != nil {
 		return utils.BadRequest("Invalid request payload", err.Error())
@@ -1064,7 +1086,7 @@ func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 
 	ctx := c.Context()
 
-	// ── 2. Entity existence check ─────────────────────────────────────────
+	// ── 2. Entity existence check
 	var entityExists bool
 	if err := h.DB.QueryRow(ctx, `
 		SELECT EXISTS(
@@ -1082,7 +1104,7 @@ func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 		})
 	}
 
-	// ── 3. Deduplication via external_ref ────────────────────────────────
+	// ── 3. Deduplication via external_ref
 	if req.ExternalRef != nil && *req.ExternalRef != "" {
 		var existingID string
 		var existingCreatedAt time.Time
@@ -1105,7 +1127,7 @@ func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 		}
 	}
 
-	// ── 4. Insert + increment usage in a transaction ──────────────────────
+	// ── 4. Insert + increment usage in a transaction
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
 		return utils.InternalServerError("Failed to start transaction", err.Error())
@@ -1253,7 +1275,7 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 		resolved = append(resolved, resolvedItem{item, occurredAt})
 	}
 
-	// ── Phase 2: Bulk entity existence check ────────────────────────────────
+	// ── Phase 2: Bulk entity existence check
 	// Collect unique entity IDs to validate in one query
 	entityIDSet := make(map[string]struct{})
 	for _, r := range resolved {
@@ -1293,7 +1315,7 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 		}
 	}
 
-	// ── Phase 3: external_ref deduplication (per-item, skip not fail) ───────
+	// ── Phase 3: external_ref deduplication (per-item, skip not fail)
 	type insertItem struct {
 		resolved   resolvedItem
 		existingID string // non-empty if already exists
@@ -1317,7 +1339,7 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 		}
 	}
 
-	// ── Phase 4: Single-transaction multi-row INSERT (non-duplicates only) ──
+	// ── Phase 4: Single-transaction multi-row INSERT (non-duplicates only)
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
 		return utils.InternalServerError("Failed to start transaction", err.Error())

@@ -173,17 +173,19 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 	if err != nil {
 		return utils.InternalServerError("Failed to resolve identifiers", err.Error())
 	}
+	defer rows.Close()
 
 	var matchedEntityIDs []uuid.UUID
 	for rows.Next() {
 		var id uuid.UUID
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
 			return utils.InternalServerError("Failed to scan entity ID", err.Error())
 		}
 		matchedEntityIDs = append(matchedEntityIDs, id)
 	}
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		return utils.InternalServerError("Failed to read entity rows", err.Error())
+	}
 
 	var canonicalID uuid.UUID
 
@@ -364,7 +366,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 
 	resp.Identifiers = make([]payload.EntityIdentifier, 0)
 	idRows, err := h.DB.Query(ctx, `
-		SELECT id, source, identifier_type, identifier_value, confidence, link_strategy, verified_at
+		SELECT id, source, identifier_type, identifier_value, confidence, link_strategy::text, verified_at
 		FROM entity_identifiers
 		WHERE entity_id = $1 AND tenant_id = $2
 	`, canonicalID, tenantID)
@@ -378,6 +380,9 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 			return utils.InternalServerError("Failed to scan identifier", err.Error())
 		}
 		resp.Identifiers = append(resp.Identifiers, ei)
+	}
+	if err := idRows.Err(); err != nil {
+		return utils.InternalServerError("Failed to read identifier rows", err.Error())
 	}
 
 	return c.JSON(resp)
@@ -544,7 +549,9 @@ func (h *Handler) LinkEntityManuallyHandler(c fiber.Ctx) error {
 			ActionRequired:   "merge_entities_or_reject",
 		})
 	}
-	conflictRows.Close()
+	if err := conflictRows.Err(); err != nil {
+		return utils.InternalServerError("Failed to read conflict rows", err.Error())
+	}
 
 	if len(conflicts) > 0 {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
@@ -581,7 +588,7 @@ func (h *Handler) LinkEntityManuallyHandler(c fiber.Ctx) error {
 
 	// ── 5. Fetch all identifiers and return ───────────────────────────────
 	idRows, err := h.DB.Query(ctx, `
-		SELECT id, source, identifier_type, identifier_value, confidence, link_strategy, verified_at
+		SELECT id, source, identifier_type, identifier_value, confidence, link_strategy::text, verified_at
 		FROM entity_identifiers
 		WHERE entity_id = $1 AND tenant_id = $2
 	`, entityID, tenantID)
@@ -597,6 +604,9 @@ func (h *Handler) LinkEntityManuallyHandler(c fiber.Ctx) error {
 			return utils.InternalServerError("Failed to scan identifier", err.Error())
 		}
 		identifiers = append(identifiers, ei)
+	}
+	if err := idRows.Err(); err != nil {
+		return utils.InternalServerError("Failed to read identifier rows", err.Error())
 	}
 
 	return c.JSON(payload.LinkIdentifiersResponse{

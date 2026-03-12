@@ -728,7 +728,10 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 			LIMIT $%d OFFSET $%d
 		`, whereClause, dbSortField, sortOrder, argID, argID+1)
 
-		fetchArgs := append(args, limit, offset)
+		fetchArgs := make([]interface{}, len(args), len(args)+2)
+		copy(fetchArgs, args)
+		fetchArgs = append(fetchArgs, limit, offset)
+		
 		rows, err := h.DB.Query(gCtx, query, fetchArgs...)
 		if err != nil {
 			return fmt.Errorf("fetch_query: %w", err)
@@ -758,6 +761,9 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 			}
 
 			entities = append(entities, e)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("fetch_rows_err: %w", err)
 		}
 		return nil
 	})
@@ -874,12 +880,15 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 			}
 			identifiers = append(identifiers, ei)
 		}
+		if err := idRows.Err(); err != nil {
+			return fmt.Errorf("identifiers_rows_err: %w", err)
+		}
 		return nil
 	})
 
 	g.Go(func() error {
 		interactionQuery := `
-			SELECT id, api, action_type, outcome, occurred_at
+			SELECT id, api, action_type, outcome::text, occurred_at
 			FROM interactions
 			WHERE entity_id = $1 AND tenant_id = $2
 			ORDER BY occurred_at DESC
@@ -897,6 +906,9 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 				return fmt.Errorf("interactions_scan: %w", err)
 			}
 			interactions = append(interactions, is)
+		}
+		if err := intRows.Err(); err != nil {
+			return fmt.Errorf("interactions_rows_err: %w", err)
 		}
 		return nil
 	})

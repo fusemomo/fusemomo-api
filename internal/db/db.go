@@ -19,14 +19,14 @@ var (
 
 func GetPool() *pgxpool.Pool {
 	once.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
 		poolConfig, err := pgxpool.ParseConfig(config.Envs.DATABASE_URL)
 		if err != nil {
 			log.Fatalf("Unable to parse DATABASE_URL: %v\n", err)
 		}
-		
+
 		// Disable prepared statement cache to fix PgBouncer (Supabase) transaction pooling collisions
 		poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 

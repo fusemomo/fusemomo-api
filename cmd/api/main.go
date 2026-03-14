@@ -45,6 +45,11 @@ func main() {
 	defer db.Close()
 
 	server := server.New(pool)
+	defer func() {
+		if err := server.RateLimiter.Close(); err != nil {
+			log.Printf("rate limiter shutdown error: %v", err)
+		}
+	}()
 	server.Get("/swagger/*", swaggo.HandlerDefault)
 	server.Get("/docs/*", swaggo.New(swaggo.Config{
 		URL:               "/swagger/doc.json",

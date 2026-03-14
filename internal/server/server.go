@@ -2,6 +2,7 @@ package server
 
 import (
 	_ "fusemomo-api/cmd/api/docs"
+	"fusemomo-api/internal/middlewares/ratelimit"
 	"fusemomo-api/internal/utils"
 
 	"github.com/gofiber/fiber/v3"
@@ -10,7 +11,8 @@ import (
 
 type FiberServer struct {
 	*fiber.App
-	DB *pgxpool.Pool
+	DB          *pgxpool.Pool
+	RateLimiter *ratelimit.RateLimiter
 }
 
 func New(db *pgxpool.Pool) *FiberServer {
@@ -20,7 +22,9 @@ func New(db *pgxpool.Pool) *FiberServer {
 			AppName:      "fusemomo-api",
 			ErrorHandler: utils.ErrorHandler,
 		}),
-		DB: db,
+		DB:          db,
+		RateLimiter: ratelimit.NewRateLimiter(ratelimit.DefaultConfig()),
 	}
 	return server
 }
+

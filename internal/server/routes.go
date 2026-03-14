@@ -27,19 +27,23 @@ func (s *FiberServer) RegisterFiberRoutes() error {
 func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	apiV1 := s.App.Group("/v1")
 
+	rl := s.RateLimiter // convenience alias
+
 	// Dashboard routes require user authentication via Supabase JWT
 	app := apiV1.Group(
 		"/app",
 		middlewares.SupabaseJWTMiddleware(s.DB),
 		middlewares.RequireRole("user", "admin"),
+		rl.Middleware(),
 	)
 	dashboard := apiV1.Group(
 		"/dashboard",
 		middlewares.SupabaseJWTMiddleware(s.DB),
 		middlewares.RequireRole("user", "admin"),
+		rl.Middleware(),
 	)
 
-	// admin routes
+	// admin routes (AdminBypass in config allows these through without counting)
 	admin := apiV1.Group(
 		"/admin",
 		middlewares.SupabaseJWTMiddleware(s.DB),
@@ -49,6 +53,7 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	core := apiV1.Group(
 		"/core",
 		middlewares.APIKeyMiddleware(s.DB),
+		rl.Middleware(),
 	)
 
 	// auth routes

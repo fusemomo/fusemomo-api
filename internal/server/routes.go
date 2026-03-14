@@ -71,6 +71,14 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	dashboard.Get("/recommendations", h.GetRecommendationsHandler)
 	dashboard.Get("/recommendations/stats", h.GetRecommendationStatsHandler)
 
+	app.Get("/analytics/summary", h.GetAnalyticsSummaryHandler)
+	app.Get("/analytics/success-rate-timeseries", h.GetSuccessRateTimeSeriesHandler)
+	app.Get("/analytics/performance-by-action-type", h.GetPerformanceByActionTypeHandler)
+	app.Get("/analytics/activity-heatmap", h.GetActivityHeatmapHandler)
+	app.Get("/analytics/api-distribution", h.GetApiDistributionHandler)
+	app.Get("/analytics/top-entities", h.GetTopEntitiesHandler)
+	app.Get("/analytics/recommendation-impact", h.GetRecommendationImpactHandler)
+
 	admin.Get("/tenants", h.GetAdminTenantsHandler)
 	admin.Patch("/tenants/:id/plan", h.UpdateAdminTenantPlanHandler)
 	admin.Get("/usage/global", h.GetGlobalTenantUsagesHandler)

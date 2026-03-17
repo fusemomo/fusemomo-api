@@ -1,8 +1,12 @@
 package server
 
 import (
+	"time"
+
 	v1 "fusemomo-api/internal/handlers/v1"
 	"fusemomo-api/internal/middlewares"
+
+	"github.com/gofiber/fiber/v3/middleware/limiter"
 )
 
 // RegisterFiberRoutes registers all application routes and global middleware.
@@ -57,7 +61,10 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	)
 
 	// auth routes
-	auth := apiV1.Group("/auth")
+	auth := apiV1.Group("/auth", limiter.New(limiter.Config{
+		Max:        5,
+		Expiration: 1 * time.Minute,
+	}))
 	auth.Get("/login/:provider", h.LoginWithProvider)
 
 	apiKey := app.Group("/key")

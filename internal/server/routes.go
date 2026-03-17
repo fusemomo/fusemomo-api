@@ -40,12 +40,6 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 		middlewares.RequireRole("user", "admin"),
 		rl.Middleware(),
 	)
-	dashboard := apiV1.Group(
-		"/dashboard",
-		middlewares.SupabaseJWTMiddleware(s.DB),
-		middlewares.RequireRole("user", "admin"),
-		rl.Middleware(),
-	)
 
 	// admin routes (AdminBypass in config allows these through without counting)
 	admin := apiV1.Group(
@@ -75,13 +69,13 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	apiKey.Post("/sync-expired", h.SyncExpiredAPIKeysHandler)
 	apiKey.Post("/:id/revoke", h.RevokeAPIKeyHandler)
 
-	dashboard.Delete("", h.DeleteTenantProfileHandler)
-	dashboard.Get("/profile", h.GetProfileHandler)
-	dashboard.Patch("/profile", h.UpdateTenantProfileHandler)
-	dashboard.Get("/usage", h.GetMonthlyUsageHandler)
-	dashboard.Get("/usage/history", h.GetHistoricalUsageHandler)
-	dashboard.Get("/recommendations", h.GetRecommendationsHandler)
-	dashboard.Get("/recommendations/stats", h.GetRecommendationStatsHandler)
+	app.Delete("", h.DeleteTenantProfileHandler)
+	app.Get("/profile", h.GetProfileHandler)
+	app.Patch("/profile", h.UpdateTenantProfileHandler)
+	app.Get("/usage", h.GetMonthlyUsageHandler)
+	app.Get("/usage/history", h.GetHistoricalUsageHandler)
+	app.Get("/recommendations", h.GetRecommendationsHandler)
+	app.Get("/recommendations/stats", h.GetRecommendationStatsHandler)
 
 	app.Get("/analytics/summary", h.GetAnalyticsSummaryHandler)
 	app.Get("/analytics/success-rate-timeseries", h.GetSuccessRateTimeSeriesHandler)

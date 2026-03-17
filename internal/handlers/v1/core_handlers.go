@@ -203,8 +203,13 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		if metaJSON == nil {
 			metaJSON = map[string]any{}
 		}
+		metaBytes, err := json.Marshal(metaJSON)
+		if err != nil {
+			return utils.InternalServerError("Failed to serialize metadata", err.Error())
+		}
+
 		if err := tx.QueryRow(ctx, insertEntitySQL,
-			tenantID, req.DisplayName, req.EntityType, metaJSON,
+			tenantID, req.DisplayName, req.EntityType, string(metaBytes),
 		).Scan(&canonicalID); err != nil {
 			return utils.InternalServerError("Failed to create entity", err.Error())
 		}
@@ -238,10 +243,14 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		}
 		// Merge metadata (new values win for overlapping keys)
 		if req.Metadata != nil {
+			metaBytes, err := json.Marshal(req.Metadata)
+			if err != nil {
+				return utils.InternalServerError("Failed to serialize metadata", err.Error())
+			}
 			_, err = tx.Exec(ctx, `
 				UPDATE entities SET metadata = metadata || $1::jsonb, updated_at = NOW()
 				WHERE id = $2 AND tenant_id = $3
-			`, req.Metadata, canonicalID, tenantID)
+			`, string(metaBytes), canonicalID, tenantID)
 			if err != nil {
 				return utils.InternalServerError("Failed to merge metadata", err.Error())
 			}
@@ -259,57 +268,119 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 
 	//  Case C: Multiple matches — merge
 	default:
+
+		// Convert []uuid.UUID to []string for pgx v5 ANY() compatibility
+		matchedIDStrings := make([]string, len(matchedEntityIDs))
+		for i, id := range matchedEntityIDs {
+			matchedIDStrings[i] = id.String()
+		}
+
 		// Pick the entity with the earliest created_at as canonical
 		pickCanonicalSQL := `
 			SELECT id FROM entities
-			WHERE id = ANY($1) AND tenant_id = $2 AND deleted_at IS NULL
+			WHERE id = ANY($1::uuid[]) AND tenant_id = $2 AND deleted_at IS NULL
 			ORDER BY created_at ASC
 			LIMIT 1
 		`
-		if err := tx.QueryRow(ctx, pickCanonicalSQL, matchedEntityIDs, tenantID).Scan(&canonicalID); err != nil {
+		if err := tx.QueryRow(ctx, pickCanonicalSQL, matchedIDStrings, tenantID).Scan(&canonicalID); err != nil {
+			log.Printf("PICK CANONICAL ERROR: %v", err)
 			return utils.InternalServerError("Failed to pick canonical entity", err.Error())
 		}
 
-		// Merge all other entities into the canonical one
+		// Merge all non-canonical entities into the canonical one
 		for _, mergedID := range matchedEntityIDs {
 			if mergedID == canonicalID {
 				continue
 			}
-			// Re-point identifiers
+
+			// Re-point all identifiers from merged entity to canonical entity
 			_, err = tx.Exec(ctx, `
 				UPDATE entity_identifiers
 				SET entity_id = $1
 				WHERE entity_id = $2 AND tenant_id = $3
 			`, canonicalID, mergedID, tenantID)
 			if err != nil {
+				log.Printf("RELINK IDENTIFIERS ERROR: %v", err)
 				return utils.InternalServerError("Failed to relink identifiers during merge", err.Error())
 			}
-			// Merge metadata from the merged entity
+
+			// Re-point all interactions from merged entity to canonical entity
 			_, err = tx.Exec(ctx, `
-				UPDATE entities SET metadata = (
-					SELECT e2.metadata || e1.metadata FROM entities e1, entities e2
-					WHERE e1.id = $1 AND e2.id = $2
-				), updated_at = NOW()
-				WHERE id = $1 AND tenant_id = $3
-			`, canonicalID, mergedID, tenantID)
+				UPDATE interactions
+				SET entity_id = $1
+				WHERE entity_id = $2 AND tenant_id = $3
+        `, canonicalID, mergedID, tenantID)
 			if err != nil {
+				log.Printf("RELINK INTERACTIONS ERROR: %v", err)
+				return utils.InternalServerError("Failed to relink interactions during merge", err.Error())
+			}
+
+			// Re-point all recommendations from merged entity to canonical entity
+			_, err = tx.Exec(ctx, `
+				UPDATE recommendations
+				SET entity_id = $1
+				WHERE entity_id = $2 AND tenant_id = $3
+        `, canonicalID, mergedID, tenantID)
+			if err != nil {
+				log.Printf("RELINK RECOMMENDATIONS ERROR: %v", err)
+				return utils.InternalServerError("Failed to relink recommendations during merge", err.Error())
+			}
+
+			// Merge metadata — merged entity values used as base, canonical wins on overlap
+			_, err = tx.Exec(ctx, `
+				UPDATE entities
+				SET metadata = (
+					SELECT e_merged.metadata || e_canon.metadata
+					FROM entities e_canon
+					JOIN entities e_merged ON e_merged.id = $2
+					WHERE e_canon.id = $1
+				),
+				updated_at = NOW()
+				WHERE id = $1 AND tenant_id = $3
+        `, canonicalID, mergedID, tenantID)
+			if err != nil {
+				log.Printf("MERGE METADATA ERROR: %v", err)
 				return utils.InternalServerError("Failed to merge entity metadata", err.Error())
 			}
-			// Record the merge in entity_links
+
+			// Carry over display_name from merged entity if canonical has none
 			_, err = tx.Exec(ctx, `
-				INSERT INTO entity_links (tenant_id, canonical_entity_id, merged_entity_id, link_reason, link_strategy, confidence, triggered_by)
+				UPDATE entities e_canon
+				SET display_name = e_merged.display_name, updated_at = NOW()
+				FROM entities e_merged
+				WHERE e_canon.id = $1
+				  AND e_merged.id = $2
+				  AND e_canon.tenant_id = $3
+              AND e_canon.display_name IS NULL
+              AND e_merged.display_name IS NOT NULL
+        `, canonicalID, mergedID, tenantID)
+			if err != nil {
+				log.Printf("CARRY DISPLAY NAME ERROR: %v", err)
+				return utils.InternalServerError("Failed to carry display_name during merge", err.Error())
+			}
+
+			// Record the merge event in entity_links for audit trail
+			_, err = tx.Exec(ctx, `
+				INSERT INTO entity_links (
+					tenant_id, canonical_entity_id, merged_entity_id,
+					link_reason, link_strategy, confidence, triggered_by
+				)
 				VALUES ($1, $2, $3, 'Merged during identity resolution', 'deterministic', 1.000, 'api:resolve')
 				ON CONFLICT (tenant_id, canonical_entity_id, merged_entity_id) DO NOTHING
-			`, tenantID, canonicalID, mergedID)
+        `, tenantID, canonicalID, mergedID)
 			if err != nil {
+				log.Printf("ENTITY LINK ERROR: %v", err)
 				return utils.InternalServerError("Failed to record entity link", err.Error())
 			}
+
 			// Soft-delete the merged entity
 			_, err = tx.Exec(ctx, `
-				UPDATE entities SET deleted_at = NOW(), updated_at = NOW()
+				UPDATE entities
+				SET deleted_at = NOW(), updated_at = NOW()
 				WHERE id = $1 AND tenant_id = $2
 			`, mergedID, tenantID)
 			if err != nil {
+				log.Printf("SOFT DELETE ERROR: %v", err)
 				return utils.InternalServerError("Failed to soft-delete merged entity", err.Error())
 			}
 		}
@@ -318,22 +389,43 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		for _, p := range pairs {
 			_, err := tx.Exec(ctx, `
 				INSERT INTO entity_identifiers
-				  (entity_id, tenant_id, source, identifier_type, identifier_value, confidence, link_strategy)
+					(entity_id, tenant_id, source, identifier_type, identifier_value, confidence, link_strategy)
 				VALUES ($1, $2, $3, $4, $5, 1.000, 'deterministic')
 				ON CONFLICT (tenant_id, source, identifier_value) DO NOTHING
 			`, canonicalID, tenantID, p.source, p.source, p.value)
 			if err != nil {
+				log.Printf("LINK IDENTIFIER POST-MERGE ERROR: %v", err)
 				return utils.InternalServerError("Failed to link identifier after merge", err.Error())
 			}
 		}
-		// Merge incoming metadata on top
+
+		// Merge incoming request metadata on top of canonical entity metadata
 		if req.Metadata != nil {
-			_, err = tx.Exec(ctx, `
-				UPDATE entities SET metadata = metadata || $1::jsonb, updated_at = NOW()
-				WHERE id = $2 AND tenant_id = $3
-			`, req.Metadata, canonicalID, tenantID)
+			metaBytes, err := json.Marshal(req.Metadata)
 			if err != nil {
+				return utils.InternalServerError("Failed to serialize metadata", err.Error())
+			}
+			_, err = tx.Exec(ctx, `
+				UPDATE entities
+				SET metadata = metadata || $1::jsonb, updated_at = NOW()
+				WHERE id = $2 AND tenant_id = $3
+			`, string(metaBytes), canonicalID, tenantID)
+			if err != nil {
+				log.Printf("MERGE REQUEST METADATA ERROR: %v", err)
 				return utils.InternalServerError("Failed to merge metadata after entity merge", err.Error())
+			}
+		}
+
+		// Set display_name from request if canonical still has none after all merges
+		if req.DisplayName != nil {
+			_, err = tx.Exec(ctx, `
+				UPDATE entities
+				SET display_name = $1, updated_at = NOW()
+				WHERE id = $2 AND tenant_id = $3 AND display_name IS NULL
+			`, *req.DisplayName, canonicalID, tenantID)
+			if err != nil {
+				log.Printf("SET DISPLAY NAME ERROR: %v", err)
+				return utils.InternalServerError("Failed to set display_name after merge", err.Error())
 			}
 		}
 	}

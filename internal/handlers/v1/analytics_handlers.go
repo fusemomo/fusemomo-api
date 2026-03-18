@@ -2,9 +2,11 @@ package v1
 
 import (
 	"fmt"
+	"fusemomo-api/internal/models/payload"
 	"fusemomo-api/internal/utils"
 	"log"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -971,5 +973,253 @@ func (h *Handler) GetRecommendationImpactHandler(c fiber.Ctx) error {
 			"additional_successes":         additionalSuccesses,
 			"roi_message":                  roiMsg,
 		},
+	})
+}
+
+// GetEntityGraphHandler godoc
+// @Summary Behavioral Entity Graph data
+// @Description Returns entities, identifiers, interactions, and entity links for graph visualization
+// @Tags Graph
+// @Produce json
+// @Param entity_type query string  false "Filter by entity type"
+// @Param min_score   query number  false "Minimum behavioral score (0.0–1.0)"
+// @Param limit       query int     false "Max entities to return (default 200, max 500)"
+// @Success 200 {object} payload.GraphDataResponse
+// @Failure 400 {object} utils.APIError
+// @Failure 401 {object} utils.APIError
+// @Failure 500 {object} utils.APIError
+// @Router /app/graph [get]
+func (h *Handler) GetEntityGraphHandler(c fiber.Ctx) error {
+	start := time.Now()
+
+	tenantID, err := tenantIDFromCtx(c)
+	if err != nil {
+		return err
+	}
+
+	// --- Query params ---
+	entityTypeFilter := c.Query("entity_type")
+	minScoreStr := c.Query("min_score")
+	limitStr := c.Query("limit", "200")
+
+	limit, _ := strconv.Atoi(limitStr)
+	if limit < 1 || limit > 500 {
+		limit = 200
+	}
+
+	var minScore *float64
+	if minScoreStr != "" {
+		v, parseErr := strconv.ParseFloat(minScoreStr, 64)
+		if parseErr != nil || v < 0 || v > 1 {
+			return utils.BadRequest("min_score must be a float between 0.0 and 1.0")
+		}
+		minScore = &v
+	}
+
+	// --- Step 1: Fetch entities ---
+	entitiesSQL := `
+		SELECT id, COALESCE(display_name, ''), COALESCE(entity_type, ''),
+		       total_interactions, successful_interactions,
+		       behavioral_score, COALESCE(preferred_action_type, ''), created_at
+		FROM entities
+		WHERE tenant_id = $1 AND deleted_at IS NULL
+	`
+	args := []interface{}{tenantID}
+	argIdx := 2
+
+	if entityTypeFilter != "" {
+		entitiesSQL += fmt.Sprintf(" AND entity_type = $%d", argIdx)
+		args = append(args, entityTypeFilter)
+		argIdx++
+	}
+	if minScore != nil {
+		entitiesSQL += fmt.Sprintf(" AND behavioral_score >= $%d", argIdx)
+		args = append(args, *minScore)
+		argIdx++
+	}
+	entitiesSQL += fmt.Sprintf(" ORDER BY created_at ASC LIMIT $%d", argIdx)
+	args = append(args, limit+1) // fetch one extra to detect truncation
+
+	entityRows, err := h.DB.Query(c.Context(), entitiesSQL, args...)
+	if err != nil {
+		return utils.InternalServerError("Failed to fetch entities for graph", err.Error())
+	}
+	defer entityRows.Close()
+
+	entities := make([]payload.GraphEntity, 0, limit)
+	entityIDs := make([]string, 0, limit)
+	for entityRows.Next() {
+		var e payload.GraphEntity
+		if err := entityRows.Scan(
+			&e.ID, &e.DisplayName, &e.EntityType,
+			&e.TotalInteractions, &e.SuccessfulInteractions,
+			&e.BehavioralScore, &e.PreferredActionType, &e.CreatedAt,
+		); err != nil {
+			return utils.InternalServerError("Failed to scan entity row", err.Error())
+		}
+		entities = append(entities, e)
+		entityIDs = append(entityIDs, e.ID)
+	}
+	if err := entityRows.Err(); err != nil {
+		return utils.InternalServerError("Error iterating entity rows", err.Error())
+	}
+
+	truncated := false
+	if len(entities) > limit {
+		entities = entities[:limit]
+		entityIDs = entityIDs[:limit]
+		truncated = true
+	}
+
+	if len(entityIDs) == 0 {
+		return c.JSON(payload.GraphDataResponse{
+			Entities:      []payload.GraphEntity{},
+			Identifiers:   []payload.GraphIdentifier{},
+			Interactions:  []payload.GraphInteractionEdge{},
+			EntityLinks:   []payload.GraphEntityLink{},
+			TotalEntities: 0,
+			Truncated:     false,
+		})
+	}
+
+	// --- Steps 2–4: Run 3 parallel queries for identifiers, interactions, entity_links ---
+	var (
+		identifiers  []payload.GraphIdentifier
+		interactions []payload.GraphInteractionEdge
+		entityLinks  []payload.GraphEntityLink
+		wg           sync.WaitGroup
+		identErr     error
+		interactErr  error
+		linksErr     error
+	)
+
+	wg.Add(3)
+
+	// Identifiers
+	go func() {
+		defer wg.Done()
+		rows, qErr := h.DB.Query(c.Context(), `
+			SELECT id, entity_id, source, COALESCE(identifier_type, ''),
+			       identifier_value, confidence, link_strategy::text
+			FROM entity_identifiers
+			WHERE entity_id = ANY($1) AND tenant_id = $2
+		`, entityIDs, tenantID)
+		if qErr != nil {
+			identErr = qErr
+			return
+		}
+		defer rows.Close()
+		identifiers = make([]payload.GraphIdentifier, 0, len(entityIDs)*2)
+		for rows.Next() {
+			var id payload.GraphIdentifier
+			if scanErr := rows.Scan(
+				&id.ID, &id.EntityID, &id.Source,
+				&id.IdentifierType, &id.IdentifierValue,
+				&id.Confidence, &id.LinkStrategy,
+			); scanErr != nil {
+				identErr = scanErr
+				return
+			}
+			identifiers = append(identifiers, id)
+		}
+		identErr = rows.Err()
+	}()
+
+	// Aggregated interactions
+	go func() {
+		defer wg.Done()
+		rows, qErr := h.DB.Query(c.Context(), `
+			SELECT
+				entity_id,
+				api,
+				COUNT(*) AS total_count,
+				COUNT(*) FILTER (WHERE outcome = 'success') AS success_count,
+				MAX(occurred_at) AS last_occurred_at,
+				mode() WITHIN GROUP (ORDER BY outcome::text) AS dominant_outcome
+			FROM interactions
+			WHERE tenant_id = $1 AND entity_id = ANY($2)
+			GROUP BY entity_id, api
+    	`, tenantID, entityIDs)
+		if qErr != nil {
+			interactErr = qErr
+			return
+		}
+		defer rows.Close()
+		interactions = make([]payload.GraphInteractionEdge, 0, len(entityIDs))
+		for rows.Next() {
+			var edge payload.GraphInteractionEdge
+			var dominantOutcome *string
+			if scanErr := rows.Scan(
+				&edge.EntityID, &edge.API,
+				&edge.TotalCount, &edge.SuccessCount,
+				&edge.LastOccurredAt, &dominantOutcome,
+			); scanErr != nil {
+				interactErr = scanErr
+				return
+			}
+			if dominantOutcome != nil {
+				edge.DominantOutcome = *dominantOutcome
+			} else {
+				edge.DominantOutcome = "unknown"
+			}
+			interactions = append(interactions, edge)
+		}
+		interactErr = rows.Err()
+	}()
+
+	// Entity links
+	go func() {
+		defer wg.Done()
+		rows, qErr := h.DB.Query(c.Context(), `
+			SELECT id, canonical_entity_id, merged_entity_id,
+			       link_strategy::text, confidence
+			FROM entity_links
+			WHERE tenant_id = $1 AND canonical_entity_id = ANY($2)
+		`, tenantID, entityIDs)
+		if qErr != nil {
+			linksErr = qErr
+			return
+		}
+		defer rows.Close()
+		entityLinks = make([]payload.GraphEntityLink, 0)
+		for rows.Next() {
+			var lnk payload.GraphEntityLink
+			if scanErr := rows.Scan(
+				&lnk.ID, &lnk.CanonicalEntityID, &lnk.MergedEntityID,
+				&lnk.LinkStrategy, &lnk.Confidence,
+			); scanErr != nil {
+				linksErr = scanErr
+				return
+			}
+			entityLinks = append(entityLinks, lnk)
+		}
+		linksErr = rows.Err()
+	}()
+
+	wg.Wait()
+
+	if identErr != nil {
+		log.Printf("IDENTIFIER ERROR: %v", identErr)
+		return utils.InternalServerError("Failed to fetch identifiers for graph", identErr.Error())
+	}
+	if interactErr != nil {
+		log.Printf("INTERACTION ERROR: %v", interactErr)
+		return utils.InternalServerError("Failed to fetch interactions for graph", interactErr.Error())
+	}
+	if linksErr != nil {
+		log.Printf("LINK ERROR: %v", linksErr)
+		return utils.InternalServerError("Failed to fetch entity links for graph", linksErr.Error())
+	}
+
+	log.Printf("[GetEntityGraphHandler] tenant=%s entities=%d identifiers=%d interactions=%d links=%d truncated=%v execution_ms=%d",
+		tenantID, len(entities), len(identifiers), len(interactions), len(entityLinks), truncated, time.Since(start).Milliseconds())
+
+	return c.JSON(payload.GraphDataResponse{
+		Entities:      entities,
+		Identifiers:   identifiers,
+		Interactions:  interactions,
+		EntityLinks:   entityLinks,
+		TotalEntities: len(entities),
+		Truncated:     truncated,
 	})
 }

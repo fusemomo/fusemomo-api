@@ -824,7 +824,10 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 		query := fmt.Sprintf(`
 			SELECT e.id, e.tenant_id, e.display_name, e.entity_type, e.total_interactions, 
 			       e.successful_interactions, e.last_interaction_at, e.preferred_action_type, 
-			       e.behavioral_score, e.metadata::text, e.created_at, e.updated_at
+			       e.behavioral_score, e.metadata::text,
+			       (SELECT COUNT(*) FROM entity_identifiers ei WHERE ei.entity_id = e.id AND ei.tenant_id = $1) as identifier_count,
+			       (SELECT COALESCE(array_agg(DISTINCT source), ARRAY[]::text[]) FROM entity_identifiers ei WHERE ei.entity_id = e.id AND ei.tenant_id = $1) as identifier_sources,
+			       e.created_at, e.updated_at
 			FROM entities e
 			%s
 			ORDER BY %s %s NULLS LAST
@@ -849,7 +852,8 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 			if err := rows.Scan(
 				&e.ID, &e.TenantID, &displayName, &entityType, &e.TotalInteractions,
 				&e.SuccessfulInteractions, &e.LastInteractionAt, &preferredAction,
-				&e.BehavioralScore, &metadataBytes, &e.CreatedAt, &e.UpdatedAt,
+				&e.BehavioralScore, &metadataBytes, &e.IdentifierCount, &e.IdentifierSources,
+				&e.CreatedAt, &e.UpdatedAt,
 			); err != nil {
 				return fmt.Errorf("scan_row: %w", err)
 			}
@@ -871,6 +875,10 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 			}
 			if preferredAction != nil {
 				e.PreferredActionType = *preferredAction
+			}
+
+			if e.IdentifierSources == nil {
+				e.IdentifierSources = []string{}
 			}
 
 			entities = append(entities, e)

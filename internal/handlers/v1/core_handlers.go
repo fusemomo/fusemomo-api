@@ -196,7 +196,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 	case 0:
 		insertEntitySQL := `
 			INSERT INTO entities (tenant_id, display_name, entity_type, metadata)
-			VALUES ($1, $2, $3, $4)
+			VALUES ($1, $2, $3, $4::jsonb)
 			RETURNING id
 		`
 		metaJSON := req.Metadata
@@ -1244,7 +1244,7 @@ func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 		INSERT INTO interactions
 		  (tenant_id, entity_id, api, action_type, action, outcome,
 		   intent, agent_id, external_ref, metadata, occurred_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
 		RETURNING id, created_at
 	`,
 		tenantID, req.EntityID, req.API, req.ActionType, req.Action,
@@ -1474,7 +1474,7 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 		}
 		r := it.resolved
 		valueStrings = append(valueStrings, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d::jsonb, $%d)",
 			argID, argID+1, argID+2, argID+3, argID+4,
 			argID+5, argID+6, argID+7, argID+8, argID+9, argID+10,
 		))
@@ -1727,21 +1727,30 @@ func (h *Handler) RecommendsActionsHandler(c fiber.Ctx) error {
 	if err != nil {
 		return utils.InternalServerError("Failed to serialize scoring breakdown", err.Error())
 	}
+	breakdownStr := string(breakdownJSON)
+	if breakdownStr == "" || breakdownStr == "null" {
+		breakdownStr = "{}"
+	}
+
+	// Handle intent NOT NULL constraint (schema says VARCHAR NOT NULL, struct says required string)
+	intentStr := req.Intent
 
 	var recommendationID string
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO recommendations
 		  (tenant_id, entity_id, intent, recommended_action_type, confidence_score, scoring_breakdown)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb)
 		RETURNING id
 	`,
-		tenantID, req.EntityID, req.Intent,
-		top.ActionType, top.SuccessRate, breakdownJSON,
+		tenantID, req.EntityID, intentStr,
+		top.ActionType, top.SuccessRate, breakdownStr,
 	).Scan(&recommendationID); err != nil {
+		fmt.Println("ERROR: ", err)
 		return utils.InternalServerError("Failed to log recommendation", err.Error())
 	}
 
 	if _, err := tx.Exec(ctx, `SELECT fn_increment_usage($1, 'recommendation')`, tenantID); err != nil {
+		fmt.Println("ERROR: ", err)
 		return utils.InternalServerError("Failed to increment usage", err.Error())
 	}
 

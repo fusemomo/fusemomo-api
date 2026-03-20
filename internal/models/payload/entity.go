@@ -16,6 +16,8 @@ type EntityResponse struct {
 	PreferredActionType    string                 `json:"preferred_action_type,omitempty"`
 	BehavioralScore        *float64               `json:"behavioral_score,omitempty"`
 	Metadata               map[string]interface{} `json:"metadata"`
+	IdentifierCount        int                    `json:"identifier_count"`
+	IdentifierSources      []string               `json:"identifier_sources"`
 	CreatedAt              time.Time              `json:"created_at"`
 	UpdatedAt              time.Time              `json:"updated_at"`
 }

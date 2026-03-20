@@ -1,0 +1,33 @@
+# Version control
+.git
+.gitignore
+
+# Local environment (never bake secrets into the image)
+.env
+.env.*
+!.env.example
+
+# Dev tooling
+tmp/
+dist/
+*.air.toml
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test artifacts
+tests/
+**/*_test.go
+
+# Documentation
+*.md
+docs/
+swagger/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Agent / AI tooling
+.agent/

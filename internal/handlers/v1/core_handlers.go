@@ -1226,6 +1226,18 @@ func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 	}
 	defer tx.Rollback(ctx)
 
+	var metadataJSON string
+	if req.Metadata != nil {
+		b, err := json.Marshal(req.Metadata)
+		if err == nil {
+			metadataJSON = string(b)
+		} else {
+			metadataJSON = "{}"
+		}
+	} else {
+		metadataJSON = "{}"
+	}
+
 	var interactionID string
 	var loggedAt time.Time
 	err = tx.QueryRow(ctx, `
@@ -1237,14 +1249,16 @@ func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 	`,
 		tenantID, req.EntityID, req.API, req.ActionType, req.Action,
 		req.Outcome, req.Intent, req.AgentID, req.ExternalRef,
-		req.Metadata, occurredAt,
+		metadataJSON, occurredAt,
 	).Scan(&interactionID, &loggedAt)
 	if err != nil {
+		fmt.Println("ERROR: ", err)
 		return utils.InternalServerError("Failed to log interaction", err.Error())
 	}
 
 	_, err = tx.Exec(ctx, `SELECT fn_increment_usage($1, 'interaction')`, tenantID)
 	if err != nil {
+		fmt.Println("ERROR: ", err)
 		return utils.InternalServerError("Failed to increment usage", err.Error())
 	}
 
@@ -1464,10 +1478,22 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 			argID, argID+1, argID+2, argID+3, argID+4,
 			argID+5, argID+6, argID+7, argID+8, argID+9, argID+10,
 		))
+		var metadataJSON string
+		if r.item.Metadata != nil {
+			b, err := json.Marshal(r.item.Metadata)
+			if err == nil {
+				metadataJSON = string(b)
+			} else {
+				metadataJSON = "{}"
+			}
+		} else {
+			metadataJSON = "{}"
+		}
+
 		valueArgs = append(valueArgs,
 			tenantID, r.item.EntityID, r.item.API, r.item.ActionType, r.item.Action,
 			r.item.Outcome, r.item.Intent, r.item.AgentID, r.item.ExternalRef,
-			r.item.Metadata, r.occurredAt,
+			metadataJSON, r.occurredAt,
 		)
 		newItemIndexes = append(newItemIndexes, i)
 		argID += 11

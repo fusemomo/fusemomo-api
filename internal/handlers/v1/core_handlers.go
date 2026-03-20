@@ -196,7 +196,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 	case 0:
 		insertEntitySQL := `
 			INSERT INTO entities (tenant_id, display_name, entity_type, metadata)
-			VALUES ($1, $2, $3, $4::jsonb)
+			VALUES ($1, $2, $3, $4)
 			RETURNING id
 		`
 		metaJSON := req.Metadata
@@ -824,10 +824,7 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 		query := fmt.Sprintf(`
 			SELECT e.id, e.tenant_id, e.display_name, e.entity_type, e.total_interactions, 
 			       e.successful_interactions, e.last_interaction_at, e.preferred_action_type, 
-			       e.behavioral_score, e.metadata::text,
-			       (SELECT COUNT(*) FROM entity_identifiers ei WHERE ei.entity_id = e.id AND ei.tenant_id = $1) as identifier_count,
-			       (SELECT COALESCE(array_agg(DISTINCT source), ARRAY[]::text[]) FROM entity_identifiers ei WHERE ei.entity_id = e.id AND ei.tenant_id = $1) as identifier_sources,
-			       e.created_at, e.updated_at
+			       e.behavioral_score, e.metadata::text, e.created_at, e.updated_at
 			FROM entities e
 			%s
 			ORDER BY %s %s NULLS LAST
@@ -852,8 +849,7 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 			if err := rows.Scan(
 				&e.ID, &e.TenantID, &displayName, &entityType, &e.TotalInteractions,
 				&e.SuccessfulInteractions, &e.LastInteractionAt, &preferredAction,
-				&e.BehavioralScore, &metadataBytes, &e.IdentifierCount, &e.IdentifierSources,
-				&e.CreatedAt, &e.UpdatedAt,
+				&e.BehavioralScore, &metadataBytes, &e.CreatedAt, &e.UpdatedAt,
 			); err != nil {
 				return fmt.Errorf("scan_row: %w", err)
 			}
@@ -875,10 +871,6 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 			}
 			if preferredAction != nil {
 				e.PreferredActionType = *preferredAction
-			}
-
-			if e.IdentifierSources == nil {
-				e.IdentifierSources = []string{}
 			}
 
 			entities = append(entities, e)
@@ -1234,39 +1226,25 @@ func (h *Handler) LogInteractionHandler(c fiber.Ctx) error {
 	}
 	defer tx.Rollback(ctx)
 
-	var metadataJSON string
-	if req.Metadata != nil {
-		b, err := json.Marshal(req.Metadata)
-		if err == nil {
-			metadataJSON = string(b)
-		} else {
-			metadataJSON = "{}"
-		}
-	} else {
-		metadataJSON = "{}"
-	}
-
 	var interactionID string
 	var loggedAt time.Time
 	err = tx.QueryRow(ctx, `
 		INSERT INTO interactions
 		  (tenant_id, entity_id, api, action_type, action, outcome,
 		   intent, agent_id, external_ref, metadata, occurred_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at
 	`,
 		tenantID, req.EntityID, req.API, req.ActionType, req.Action,
 		req.Outcome, req.Intent, req.AgentID, req.ExternalRef,
-		metadataJSON, occurredAt,
+		req.Metadata, occurredAt,
 	).Scan(&interactionID, &loggedAt)
 	if err != nil {
-		fmt.Println("ERROR: ", err)
 		return utils.InternalServerError("Failed to log interaction", err.Error())
 	}
 
 	_, err = tx.Exec(ctx, `SELECT fn_increment_usage($1, 'interaction')`, tenantID)
 	if err != nil {
-		fmt.Println("ERROR: ", err)
 		return utils.InternalServerError("Failed to increment usage", err.Error())
 	}
 
@@ -1482,26 +1460,14 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 		}
 		r := it.resolved
 		valueStrings = append(valueStrings, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d::jsonb, $%d)",
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
 			argID, argID+1, argID+2, argID+3, argID+4,
 			argID+5, argID+6, argID+7, argID+8, argID+9, argID+10,
 		))
-		var metadataJSON string
-		if r.item.Metadata != nil {
-			b, err := json.Marshal(r.item.Metadata)
-			if err == nil {
-				metadataJSON = string(b)
-			} else {
-				metadataJSON = "{}"
-			}
-		} else {
-			metadataJSON = "{}"
-		}
-
 		valueArgs = append(valueArgs,
 			tenantID, r.item.EntityID, r.item.API, r.item.ActionType, r.item.Action,
 			r.item.Outcome, r.item.Intent, r.item.AgentID, r.item.ExternalRef,
-			metadataJSON, r.occurredAt,
+			r.item.Metadata, r.occurredAt,
 		)
 		newItemIndexes = append(newItemIndexes, i)
 		argID += 11
@@ -1735,30 +1701,21 @@ func (h *Handler) RecommendsActionsHandler(c fiber.Ctx) error {
 	if err != nil {
 		return utils.InternalServerError("Failed to serialize scoring breakdown", err.Error())
 	}
-	breakdownStr := string(breakdownJSON)
-	if breakdownStr == "" || breakdownStr == "null" {
-		breakdownStr = "{}"
-	}
-
-	// Handle intent NOT NULL constraint (schema says VARCHAR NOT NULL, struct says required string)
-	intentStr := req.Intent
 
 	var recommendationID string
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO recommendations
 		  (tenant_id, entity_id, intent, recommended_action_type, confidence_score, scoring_breakdown)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id
 	`,
-		tenantID, req.EntityID, intentStr,
-		top.ActionType, top.SuccessRate, breakdownStr,
+		tenantID, req.EntityID, req.Intent,
+		top.ActionType, top.SuccessRate, breakdownJSON,
 	).Scan(&recommendationID); err != nil {
-		fmt.Println("ERROR: ", err)
 		return utils.InternalServerError("Failed to log recommendation", err.Error())
 	}
 
 	if _, err := tx.Exec(ctx, `SELECT fn_increment_usage($1, 'recommendation')`, tenantID); err != nil {
-		fmt.Println("ERROR: ", err)
 		return utils.InternalServerError("Failed to increment usage", err.Error())
 	}
 

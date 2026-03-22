@@ -756,6 +756,7 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 
 	entityType := c.Query("entity_type")
 	source := c.Query("source")
+	search := strings.TrimSpace(c.Query("search"))
 	minScoreStr := c.Query("min_score")
 	sortField := c.Query("sort", "last_interaction_at")
 	sortOrder := strings.ToLower(c.Query("order", "desc"))
@@ -793,6 +794,16 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 	if hasMinScore {
 		whereClauses = append(whereClauses, fmt.Sprintf("e.behavioral_score >= $%d", argID))
 		args = append(args, minScore)
+		argID++
+	}
+
+	if search != "" {
+		// Match display_name OR any linked identifier value (case-insensitive)
+		whereClauses = append(whereClauses, fmt.Sprintf(
+			"(e.display_name ILIKE $%d OR EXISTS (SELECT 1 FROM entity_identifiers ei WHERE ei.entity_id = e.id AND ei.tenant_id = $1 AND ei.identifier_value ILIKE $%d))",
+			argID, argID,
+		))
+		args = append(args, "%"+search+"%")
 		argID++
 	}
 

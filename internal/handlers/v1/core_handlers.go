@@ -315,6 +315,30 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 				return utils.InternalServerError("Failed to relink interactions during merge", err.Error())
 			}
 
+			// After re-pointing, recalculate the canonical entity's aggregated stats.
+			// The AFTER INSERT trigger cannot fire for UPDATE statements, so the cached
+			// total_interactions counter would be stale without this recalculation.
+			_, err = tx.Exec(ctx, `
+				UPDATE entities
+				SET
+					total_interactions      = sub.total,
+					successful_interactions = sub.successful,
+					behavioral_score        = ROUND(sub.successful::NUMERIC / NULLIF(sub.total, 0), 3),
+					updated_at              = NOW()
+				FROM (
+					SELECT
+						COUNT(*)                                    AS total,
+						COUNT(*) FILTER (WHERE outcome = 'success') AS successful
+					FROM interactions
+					WHERE entity_id = $1 AND tenant_id = $2
+				) sub
+				WHERE entities.id = $1 AND entities.tenant_id = $2
+			`, canonicalID, tenantID)
+			if err != nil {
+				log.Printf("RECOMPUTE ENTITY STATS ERROR: %v", err)
+				return utils.InternalServerError("Failed to recompute entity stats during merge", err.Error())
+			}
+
 			// Re-point all recommendations from merged entity to canonical entity
 			_, err = tx.Exec(ctx, `
 				UPDATE recommendations
@@ -964,15 +988,15 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 		var displayName, entityType, preferredAction *string
 		var metadataStr string
 		entityQuery := `
-			SELECT id, tenant_id, display_name, entity_type, total_interactions,
-			       successful_interactions, last_interaction_at, preferred_action_type,
+			SELECT id, tenant_id, display_name, entity_type,
+			       last_interaction_at, preferred_action_type,
 			       behavioral_score, metadata::text, created_at, updated_at
 			FROM entities
 			WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 		`
 		if err := h.DB.QueryRow(ctx, entityQuery, entityID, tenantID).Scan(
-			&resp.ID, &resp.TenantID, &displayName, &entityType, &resp.TotalInteractions,
-			&resp.SuccessfulInteractions, &resp.LastInteractionAt, &preferredAction,
+			&resp.ID, &resp.TenantID, &displayName, &entityType,
+			&resp.LastInteractionAt, &preferredAction,
 			&resp.BehavioralScore, &metadataStr, &resp.CreatedAt, &resp.UpdatedAt,
 		); err != nil {
 			if strings.Contains(err.Error(), "no rows") {
@@ -999,8 +1023,8 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 		}
 	}
 
-	//  Step 2: Concurrently fetch identifiers + recent interactions
-	// Entity is confirmed to exist — safe to issue both sub-queries in parallel.
+	//  Step 2: Concurrently fetch identifiers, recent interactions, and live stats
+	// Entity is confirmed to exist — safe to issue all sub-queries in parallel.
 	g, gCtx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
@@ -1051,6 +1075,25 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 		}
 		if err := intRows.Err(); err != nil {
 			return fmt.Errorf("interactions_rows_err: %w", err)
+		}
+		return nil
+	})
+
+	// Live counts — source of truth for the displayed totals.
+	// The entity's cached total_interactions counter can drift after entity merges
+	// (merges use UPDATE, not INSERT, so the AFTER INSERT trigger never fires for
+	// the canonical entity). Querying the live table ensures exactly what the
+	// Recent Interactions query can see is reflected in the header count.
+	g.Go(func() error {
+		countQuery := `
+			SELECT COUNT(*), COUNT(*) FILTER (WHERE outcome = 'success')
+			FROM interactions
+			WHERE entity_id = $1 AND tenant_id = $2
+		`
+		if err := h.DB.QueryRow(gCtx, countQuery, entityID, tenantID).Scan(
+			&resp.TotalInteractions, &resp.SuccessfulInteractions,
+		); err != nil {
+			return fmt.Errorf("live_counts_query: %w", err)
 		}
 		return nil
 	})

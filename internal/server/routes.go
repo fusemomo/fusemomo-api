@@ -10,15 +10,14 @@ import (
 )
 
 // RegisterFiberRoutes registers all application routes and global middleware.
-// Returns an error if any middleware cannot be initialised (e.g. invalid JWK).
 func (s *FiberServer) RegisterFiberRoutes() error {
 
 	h := v1.NewV1Handler(s.DB)
+	v1.SessionStore = s.SessionStore
 
 	s.App.Use(middlewares.CORS())
 	s.App.Use(middlewares.RequestIDMiddleware())
 	s.App.Use(middlewares.LoggingMiddleware())
-	// s.App.Use(middlewares.SupabaseJWTMiddleware(s.DB))
 
 	s.App.Get("/ping", h.PingPongHandler)
 	s.App.Get("/health", h.DbHealthHandler)
@@ -31,20 +30,30 @@ func (s *FiberServer) RegisterFiberRoutes() error {
 func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	apiV1 := s.App.Group("/v1")
 
-	rl := s.RateLimiter // convenience alias
+	rl := s.RateLimiter
 
-	// Dashboard routes require user authentication via Supabase JWT
+	//  Auth routes
+	authLimiter := limiter.New(limiter.Config{
+		Max:        30,
+		Expiration: 1 * time.Minute,
+	})
+	auth := apiV1.Group("/auth", authLimiter)
+	auth.Get("/login/:provider", h.LoginWithProvider)
+	auth.Post("/session", h.CreateSessionHandler)
+	auth.Delete("/session", h.DeleteSessionHandler)
+
+	//  fusemomo app
 	app := apiV1.Group(
 		"/app",
-		middlewares.SupabaseJWTMiddleware(s.DB),
+		middlewares.SessionCookieMiddleware(s.SessionStore),
 		middlewares.RequireRole("user", "admin"),
 		rl.Middleware(),
 	)
 
-	// admin routes (AdminBypass in config allows these through without counting)
+	//  Admin routes
 	admin := apiV1.Group(
 		"/admin",
-		middlewares.SupabaseJWTMiddleware(s.DB),
+		middlewares.SessionCookieMiddleware(s.SessionStore),
 		middlewares.RequireRole("admin"),
 	)
 
@@ -54,13 +63,7 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 		rl.Middleware(),
 	)
 
-	// auth routes
-	auth := apiV1.Group("/auth", limiter.New(limiter.Config{
-		Max:        5,
-		Expiration: 1 * time.Minute,
-	}))
-	auth.Get("/login/:provider", h.LoginWithProvider)
-
+	// App routes
 	apiKey := app.Group("/key")
 	apiKey.Get("", h.GetAPIKeysHandler)
 	apiKey.Get("/all", h.ListAllAPIKeysHandler)
@@ -86,11 +89,13 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	app.Get("/analytics/recommendation-impact", h.GetRecommendationImpactHandler)
 	app.Get("/graph", h.GetEntityGraphHandler)
 
+	// Admin routes
 	admin.Get("/tenants", h.GetAdminTenantsHandler)
 	admin.Patch("/tenants/:id/plan", h.UpdateAdminTenantPlanHandler)
 	admin.Get("/usage/global", h.GetGlobalTenantUsagesHandler)
 	admin.Delete("/tenants/:id", h.DeleteTenantHandler)
 
+	// Core (agent-facing, API key auth — unchanged)
 	core.Post("/entities/resolve", h.ResolveEntitiesHandler)
 	core.Post("/entities/:id/link", h.LinkEntityManuallyHandler)
 	core.Get("/entities", h.GetAllEntitiesHandler)
@@ -100,5 +105,4 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	core.Post("/interactions/batch", h.LogBatchInteractionsHandler)
 	core.Post("/recommends", h.RecommendsActionsHandler)
 	core.Patch("/recommends/:id/outcomes", h.RecommendsActionsOutcomesHandler)
-
 }

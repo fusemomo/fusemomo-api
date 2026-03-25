@@ -89,6 +89,12 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	app.Get("/analytics/recommendation-impact", h.GetRecommendationImpactHandler)
 	app.Get("/graph", h.GetEntityGraphHandler)
 
+	// Entity routes for the dashboard
+	app.Get("/entities", h.GetAllEntitiesHandler)
+	app.Get("/entities/:id", h.GetEntityHandler)
+	app.Delete("/entities/:id", h.DeleteEntityHandler)
+	app.Post("/entities/resolve", h.ResolveEntitiesHandler)
+
 	// Admin routes
 	admin.Get("/tenants", h.GetAdminTenantsHandler)
 	admin.Patch("/tenants/:id/plan", h.UpdateAdminTenantPlanHandler)

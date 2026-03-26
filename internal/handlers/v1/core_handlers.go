@@ -102,9 +102,8 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 
 	ctx := c.Context()
 
-	// Fetch the tenant's monthly resolution limit and current usage in one query.
-	var monthlyLimit int
-	var currentUsage int
+	//  Rate-limit check
+	var monthlyLimit, currentUsage int
 	rateLimitQuery := `
 		SELECT t.monthly_resolution_limit,
 		       COALESCE(ul.resolution_count, 0)
@@ -120,7 +119,6 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 	}
 	if monthlyLimit != -1 && currentUsage >= monthlyLimit {
 		now := time.Now().UTC()
-		// First day of next month at 00:00 UTC
 		resetAt := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
 		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
 			"error":       "rate_limit_exceeded",
@@ -132,67 +130,72 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		})
 	}
 
+	//  Build flat source/value slices once (used throughout)
+	// pgx accepts []string for unnest, which avoids building dynamic $N placeholders.
+	type idPair struct{ source, value string }
+	pairs := make([]idPair, 0, len(req.Identifiers))
+	srcSlice := make([]string, 0, len(req.Identifiers))
+	valSlice := make([]string, 0, len(req.Identifiers))
+	for src, val := range req.Identifiers {
+		pairs = append(pairs, idPair{src, val})
+		srcSlice = append(srcSlice, src)
+		valSlice = append(valSlice, val)
+	}
+
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
 		return utils.InternalServerError("Failed to start transaction", err.Error())
 	}
 	defer tx.Rollback(ctx)
 
-	// Build a dynamic OR clause: (source = $n AND identifier_value = $n+1) OR …
-	type idPair struct{ source, value string }
-	pairs := make([]idPair, 0, len(req.Identifiers))
-	for src, val := range req.Identifiers {
-		pairs = append(pairs, idPair{src, val})
-	}
-
-	orClauses := make([]string, 0, len(pairs))
-	lookupArgs := []interface{}{tenantID}
-	argPos := 2
-	for _, p := range pairs {
-		orClauses = append(orClauses,
-			fmt.Sprintf("(source = $%d AND identifier_value = $%d)", argPos, argPos+1))
-		lookupArgs = append(lookupArgs, p.source, p.value)
-		argPos += 2
-	}
-
-	lookupSQL := fmt.Sprintf(`
+	//  Resolve: find all entity IDs that match any incoming identifier
+	lookupSQL := `
 		SELECT DISTINCT ei.entity_id
 		FROM entity_identifiers ei
 		JOIN entities e ON e.id = ei.entity_id
 		WHERE ei.tenant_id = $1
-		  AND (%s)
+		  AND (ei.source, ei.identifier_value) IN (
+		      SELECT * FROM unnest($2::text[], $3::text[])
+		  )
 		  AND e.deleted_at IS NULL
-	`, strings.Join(orClauses, " OR "))
-
-	rows, err := tx.Query(ctx, lookupSQL, lookupArgs...)
+	`
+	rows, err := tx.Query(ctx, lookupSQL, tenantID, srcSlice, valSlice)
 	if err != nil {
 		return utils.InternalServerError("Failed to resolve identifiers", err.Error())
 	}
-	defer rows.Close()
-
 	var matchedEntityIDs []uuid.UUID
 	for rows.Next() {
 		var id uuid.UUID
 		if err := rows.Scan(&id); err != nil {
+			rows.Close()
 			return utils.InternalServerError("Failed to scan entity ID", err.Error())
 		}
 		matchedEntityIDs = append(matchedEntityIDs, id)
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
 		return utils.InternalServerError("Failed to read entity rows", err.Error())
+	}
+
+	//  Shared helper: bulk-upsert all incoming identifiers to a known entity
+	// One round-trip regardless of how many identifier pairs are in the request.
+	bulkLinkIdentifiers := func(entityID uuid.UUID) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO entity_identifiers
+			  (entity_id, tenant_id, source, identifier_type, identifier_value, confidence, link_strategy)
+			SELECT $1, $2, src, src, val, 1.000, 'deterministic'
+			FROM   unnest($3::text[], $4::text[]) AS t(src, val)
+			ON CONFLICT (tenant_id, source, identifier_value) DO NOTHING
+		`, entityID, tenantID, srcSlice, valSlice)
+		return err
 	}
 
 	var canonicalID uuid.UUID
 
 	switch len(matchedEntityIDs) {
 
-	//  Case A: New entity
+	//  Case A: No match — create a brand-new entity
 	case 0:
-		insertEntitySQL := `
-			INSERT INTO entities (tenant_id, display_name, entity_type, metadata)
-			VALUES ($1, $2, $3, $4::jsonb)
-			RETURNING id
-		`
 		metaJSON := req.Metadata
 		if metaJSON == nil {
 			metaJSON = map[string]any{}
@@ -201,247 +204,230 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		if err != nil {
 			return utils.InternalServerError("Failed to serialize metadata", err.Error())
 		}
-
-		if err := tx.QueryRow(ctx, insertEntitySQL,
-			tenantID, req.DisplayName, req.EntityType, string(metaBytes),
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO entities (tenant_id, display_name, entity_type, metadata)
+			VALUES ($1, $2, $3, $4::jsonb)
+			RETURNING id
+		`, tenantID, req.DisplayName, req.EntityType, string(metaBytes),
 		).Scan(&canonicalID); err != nil {
 			return utils.InternalServerError("Failed to create entity", err.Error())
 		}
-		// Insert all identifiers
-		for _, p := range pairs {
-			_, err := tx.Exec(ctx, `
-				INSERT INTO entity_identifiers
-				  (entity_id, tenant_id, source, identifier_type, identifier_value, confidence, link_strategy)
-				VALUES ($1, $2, $3, $4, $5, 1.000, 'deterministic')
-				ON CONFLICT (tenant_id, source, identifier_value) DO NOTHING
-			`, canonicalID, tenantID, p.source, p.source, p.value)
-			if err != nil {
-				return utils.InternalServerError("Failed to insert identifier", err.Error())
-			}
+
+		// Bulk-insert all identifiers in one query (was: loop)
+		if err := bulkLinkIdentifiers(canonicalID); err != nil {
+			return utils.InternalServerError("Failed to insert identifiers", err.Error())
 		}
 
-	//  Case B: Single match — link any new identifiers
+	//  Case B: Single match — link any new identifiers, patch metadata
 	case 1:
 		canonicalID = matchedEntityIDs[0]
-		for _, p := range pairs {
-			_, err := tx.Exec(ctx, `
-				INSERT INTO entity_identifiers
-				  (entity_id, tenant_id, source, identifier_type, identifier_value, confidence, link_strategy)
-				VALUES ($1, $2, $3, $4, $5, 1.000, 'deterministic')
-				ON CONFLICT (tenant_id, source, identifier_value) DO NOTHING
-			`, canonicalID, tenantID, p.source, p.source, p.value)
-			if err != nil {
-				return utils.InternalServerError("Failed to link identifier", err.Error())
-			}
+
+		// Bulk-upsert identifiers in one query (was: loop)
+		if err := bulkLinkIdentifiers(canonicalID); err != nil {
+			return utils.InternalServerError("Failed to link identifiers", err.Error())
 		}
+
 		if req.Metadata != nil {
 			metaBytes, err := json.Marshal(req.Metadata)
 			if err != nil {
 				return utils.InternalServerError("Failed to serialize metadata", err.Error())
 			}
-			_, err = tx.Exec(ctx, `
-				UPDATE entities SET metadata = metadata || $1::jsonb, updated_at = NOW()
+			if _, err = tx.Exec(ctx, `
+				UPDATE entities
+				SET metadata = metadata || $1::jsonb, updated_at = NOW()
 				WHERE id = $2 AND tenant_id = $3
-			`, string(metaBytes), canonicalID, tenantID)
-			if err != nil {
+			`, string(metaBytes), canonicalID, tenantID); err != nil {
 				return utils.InternalServerError("Failed to merge metadata", err.Error())
 			}
 		}
 		if req.DisplayName != nil {
-			_, err = tx.Exec(ctx, `
-				UPDATE entities SET display_name = $1, updated_at = NOW()
+			if _, err = tx.Exec(ctx, `
+				UPDATE entities
+				SET display_name = $1, updated_at = NOW()
 				WHERE id = $2 AND tenant_id = $3 AND display_name IS NULL
-			`, *req.DisplayName, canonicalID, tenantID)
-			if err != nil {
+			`, *req.DisplayName, canonicalID, tenantID); err != nil {
 				return utils.InternalServerError("Failed to update display_name", err.Error())
 			}
 		}
 
-	//  Case C: Multiple matches — merge
+	// ── Case C: Multiple matches — merge all into the oldest entity ────────────
 	default:
-
-		matchedIDStrings := make([]string, len(matchedEntityIDs))
+		// Convert matchedEntityIDs to []string for pgx ANY($1::uuid[]) compatibility
+		matchedIDStrs := make([]string, len(matchedEntityIDs))
 		for i, id := range matchedEntityIDs {
-			matchedIDStrings[i] = id.String()
+			matchedIDStrs[i] = id.String()
 		}
 
-		pickCanonicalSQL := `
-			SELECT id FROM entities
-			WHERE id = ANY($1::uuid[]) AND tenant_id = $2 AND deleted_at IS NULL
-			ORDER BY created_at ASC
-			LIMIT 1
-		`
-		if err := tx.QueryRow(ctx, pickCanonicalSQL, matchedIDStrings, tenantID).Scan(&canonicalID); err != nil {
-			log.Printf("PICK CANONICAL ERROR: %v", err)
+		// Pick canonical = oldest surviving entity (deterministic, consistent)
+		if err := tx.QueryRow(ctx, `
+        SELECT id FROM entities
+        WHERE id = ANY($1::uuid[]) AND tenant_id = $2 AND deleted_at IS NULL
+        ORDER BY created_at ASC
+        LIMIT 1
+    `, matchedIDStrs, tenantID).Scan(&canonicalID); err != nil {
 			return utils.InternalServerError("Failed to pick canonical entity", err.Error())
 		}
 
-		for _, mergedID := range matchedEntityIDs {
-			if mergedID == canonicalID {
-				continue
-			}
-
-			_, err = tx.Exec(ctx, `
-				UPDATE entity_identifiers
-				SET entity_id = $1
-				WHERE entity_id = $2 AND tenant_id = $3
-			`, canonicalID, mergedID, tenantID)
-			if err != nil {
-				log.Printf("RELINK IDENTIFIERS ERROR: %v", err)
-				return utils.InternalServerError("Failed to relink identifiers during merge", err.Error())
-			}
-
-			_, err = tx.Exec(ctx, `
-				UPDATE interactions
-				SET entity_id = $1
-				WHERE entity_id = $2 AND tenant_id = $3
-        `, canonicalID, mergedID, tenantID)
-			if err != nil {
-				log.Printf("RELINK INTERACTIONS ERROR: %v", err)
-				return utils.InternalServerError("Failed to relink interactions during merge", err.Error())
-			}
-
-			// After re-pointing, recalculate the canonical entity's aggregated stats.
-			// The AFTER INSERT trigger cannot fire for UPDATE statements, so the cached
-			// total_interactions counter would be stale without this recalculation.
-			_, err = tx.Exec(ctx, `
-				UPDATE entities
-				SET
-					total_interactions      = sub.total,
-					successful_interactions = sub.successful,
-					behavioral_score        = ROUND(sub.successful::NUMERIC / NULLIF(sub.total, 0), 3),
-					updated_at              = NOW()
-				FROM (
-					SELECT
-						COUNT(*)                                    AS total,
-						COUNT(*) FILTER (WHERE outcome = 'success') AS successful
-					FROM interactions
-					WHERE entity_id = $1 AND tenant_id = $2
-				) sub
-				WHERE entities.id = $1 AND entities.tenant_id = $2
-			`, canonicalID, tenantID)
-			if err != nil {
-				log.Printf("RECOMPUTE ENTITY STATS ERROR: %v", err)
-				return utils.InternalServerError("Failed to recompute entity stats during merge", err.Error())
-			}
-
-			// Re-point all recommendations from merged entity to canonical entity
-			_, err = tx.Exec(ctx, `
-				UPDATE recommendations
-				SET entity_id = $1
-				WHERE entity_id = $2 AND tenant_id = $3
-        `, canonicalID, mergedID, tenantID)
-			if err != nil {
-				log.Printf("RELINK RECOMMENDATIONS ERROR: %v", err)
-				return utils.InternalServerError("Failed to relink recommendations during merge", err.Error())
-			}
-
-			// Merge metadata — merged entity values used as base, canonical wins on overlap
-			_, err = tx.Exec(ctx, `
-				UPDATE entities
-				SET metadata = (
-					SELECT e_merged.metadata || e_canon.metadata
-					FROM entities e_canon
-					JOIN entities e_merged ON e_merged.id = $2
-					WHERE e_canon.id = $1
-				),
-				updated_at = NOW()
-				WHERE id = $1 AND tenant_id = $3
-        `, canonicalID, mergedID, tenantID)
-			if err != nil {
-				log.Printf("MERGE METADATA ERROR: %v", err)
-				return utils.InternalServerError("Failed to merge entity metadata", err.Error())
-			}
-
-			// Carry over display_name from merged entity if canonical has none
-			_, err = tx.Exec(ctx, `
-				UPDATE entities e_canon
-				SET display_name = e_merged.display_name, updated_at = NOW()
-				FROM entities e_merged
-				WHERE e_canon.id = $1
-				  AND e_merged.id = $2
-				  AND e_canon.tenant_id = $3
-              AND e_canon.display_name IS NULL
-              AND e_merged.display_name IS NOT NULL
-        `, canonicalID, mergedID, tenantID)
-			if err != nil {
-				log.Printf("CARRY DISPLAY NAME ERROR: %v", err)
-				return utils.InternalServerError("Failed to carry display_name during merge", err.Error())
-			}
-
-			// Record the merge event in entity_links for audit trail
-			_, err = tx.Exec(ctx, `
-				INSERT INTO entity_links (
-					tenant_id, canonical_entity_id, merged_entity_id,
-					link_reason, link_strategy, confidence, triggered_by
-				)
-				VALUES ($1, $2, $3, 'Merged during identity resolution', 'deterministic', 1.000, 'api:resolve')
-				ON CONFLICT (tenant_id, canonical_entity_id, merged_entity_id) DO NOTHING
-        `, tenantID, canonicalID, mergedID)
-			if err != nil {
-				log.Printf("ENTITY LINK ERROR: %v", err)
-				return utils.InternalServerError("Failed to record entity link", err.Error())
-			}
-
-			// Soft-delete the merged entity
-			_, err = tx.Exec(ctx, `
-				UPDATE entities
-				SET deleted_at = NOW(), updated_at = NOW()
-				WHERE id = $1 AND tenant_id = $2
-			`, mergedID, tenantID)
-			if err != nil {
-				log.Printf("SOFT DELETE ERROR: %v", err)
-				return utils.InternalServerError("Failed to soft-delete merged entity", err.Error())
+		// Collect the IDs being merged away (everyone except the canonical).
+		mergedIDs := make([]uuid.UUID, 0, len(matchedEntityIDs)-1)
+		for _, id := range matchedEntityIDs {
+			if id != canonicalID {
+				mergedIDs = append(mergedIDs, id)
 			}
 		}
 
-		// Link any incoming identifiers not yet in the table
-		for _, p := range pairs {
-			_, err := tx.Exec(ctx, `
-				INSERT INTO entity_identifiers
-					(entity_id, tenant_id, source, identifier_type, identifier_value, confidence, link_strategy)
-				VALUES ($1, $2, $3, $4, $5, 1.000, 'deterministic')
-				ON CONFLICT (tenant_id, source, identifier_value) DO NOTHING
-			`, canonicalID, tenantID, p.source, p.source, p.value)
-			if err != nil {
-				log.Printf("LINK IDENTIFIER POST-MERGE ERROR: %v", err)
-				return utils.InternalServerError("Failed to link identifier after merge", err.Error())
-			}
+		// Convert to []string for pgx ANY($1::uuid[]) compatibility
+		mergedIDStrs := make([]string, len(mergedIDs))
+		for i, id := range mergedIDs {
+			mergedIDStrs[i] = id.String()
 		}
 
-		// Merge incoming request metadata on top of canonical entity metadata
+		// 1. Re-point entity_identifiers — one UPDATE for all merged entities
+		if _, err = tx.Exec(ctx, `
+        UPDATE entity_identifiers
+        SET entity_id = $1
+        WHERE entity_id = ANY($2::uuid[]) AND tenant_id = $3
+    `, canonicalID, mergedIDStrs, tenantID); err != nil {
+			return utils.InternalServerError("Failed to relink identifiers during merge", err.Error())
+		}
+
+		// 2. Re-point interactions — one UPDATE for all merged entities
+		if _, err = tx.Exec(ctx, `
+        UPDATE interactions
+        SET entity_id = $1
+        WHERE entity_id = ANY($2::uuid[]) AND tenant_id = $3
+    `, canonicalID, mergedIDStrs, tenantID); err != nil {
+			return utils.InternalServerError("Failed to relink interactions during merge", err.Error())
+		}
+
+		// 3. Re-point recommendations — one UPDATE for all merged entities
+		if _, err = tx.Exec(ctx, `
+        UPDATE recommendations
+        SET entity_id = $1
+        WHERE entity_id = ANY($2::uuid[]) AND tenant_id = $3
+    `, canonicalID, mergedIDStrs, tenantID); err != nil {
+			return utils.InternalServerError("Failed to relink recommendations during merge", err.Error())
+		}
+
+		// 4. Recompute canonical entity's aggregated stats in one pass.
+		//    Done after all interactions have been re-pointed so the COUNT is accurate.
+		if _, err = tx.Exec(ctx, `
+        UPDATE entities
+        SET
+            total_interactions      = sub.total,
+            successful_interactions = sub.successful,
+            behavioral_score        = ROUND(sub.successful::NUMERIC / NULLIF(sub.total, 0), 3),
+            updated_at              = NOW()
+        FROM (
+            SELECT
+                COUNT(*)                                     AS total,
+                COUNT(*) FILTER (WHERE outcome = 'success') AS successful
+            FROM interactions
+            WHERE entity_id = $1 AND tenant_id = $2
+        ) sub
+        WHERE entities.id = $1 AND entities.tenant_id = $2
+    `, canonicalID, tenantID); err != nil {
+			return utils.InternalServerError("Failed to recompute entity stats during merge", err.Error())
+		}
+
+		// 5. Merge metadata from all merged entities into the canonical.
+		//    Merged entities' fields are applied first; canonical wins on key overlap.
+		if _, err = tx.Exec(ctx, `
+        UPDATE entities AS e_canon
+        SET
+            metadata   = merged.combined_meta || e_canon.metadata,
+            updated_at = NOW()
+        FROM (
+            SELECT COALESCE(
+                jsonb_object_agg(key, value),
+                '{}'::jsonb
+            ) AS combined_meta
+            FROM (
+                SELECT (jsonb_each(metadata)).*
+                FROM   entities
+                WHERE  id = ANY($2::uuid[]) AND tenant_id = $3
+                ORDER BY created_at ASC
+            ) kv
+        ) merged
+        WHERE e_canon.id = $1 AND e_canon.tenant_id = $3
+    `, canonicalID, mergedIDStrs, tenantID); err != nil {
+			return utils.InternalServerError("Failed to merge entity metadata", err.Error())
+		}
+
+		// 6. Carry over display_name from the oldest merged entity that has one,
+		//    but only if the canonical still has none.
+		if _, err = tx.Exec(ctx, `
+        UPDATE entities
+        SET
+            display_name = (
+                SELECT display_name FROM entities
+                WHERE  id = ANY($2::uuid[]) AND tenant_id = $3
+                  AND  display_name IS NOT NULL
+                ORDER BY created_at ASC
+                LIMIT 1
+            ),
+            updated_at = NOW()
+        WHERE id = $1 AND tenant_id = $3 AND display_name IS NULL
+    `, canonicalID, mergedIDStrs, tenantID); err != nil {
+			return utils.InternalServerError("Failed to carry display_name during merge", err.Error())
+		}
+
+		// 7. Record audit trail for every merge in one bulk INSERT.
+		if _, err = tx.Exec(ctx, `
+        INSERT INTO entity_links
+          (tenant_id, canonical_entity_id, merged_entity_id,
+           link_reason, link_strategy, confidence, triggered_by)
+        SELECT $1, $2, merged_id::uuid,
+               'Merged during identity resolution', 'deterministic', 1.000, 'api:resolve'
+        FROM   unnest($3::text[]) AS t(merged_id)
+        ON CONFLICT (tenant_id, canonical_entity_id, merged_entity_id) DO NOTHING
+    `, tenantID, canonicalID, mergedIDStrs); err != nil {
+			return utils.InternalServerError("Failed to record entity links", err.Error())
+		}
+
+		// 8. Soft-delete all merged entities in one UPDATE.
+		if _, err = tx.Exec(ctx, `
+        UPDATE entities
+        SET deleted_at = NOW(), updated_at = NOW()
+        WHERE id = ANY($1::uuid[]) AND tenant_id = $2
+    `, mergedIDStrs, tenantID); err != nil {
+			return utils.InternalServerError("Failed to soft-delete merged entities", err.Error())
+		}
+
+		// 9. Bulk-upsert all incoming identifiers onto the canonical (one query).
+		if err := bulkLinkIdentifiers(canonicalID); err != nil {
+			return utils.InternalServerError("Failed to link identifiers after merge", err.Error())
+		}
+
+		// 10. Merge request-level metadata on top of canonical (if provided).
 		if req.Metadata != nil {
 			metaBytes, err := json.Marshal(req.Metadata)
 			if err != nil {
 				return utils.InternalServerError("Failed to serialize metadata", err.Error())
 			}
-			_, err = tx.Exec(ctx, `
-				UPDATE entities
-				SET metadata = metadata || $1::jsonb, updated_at = NOW()
-				WHERE id = $2 AND tenant_id = $3
-			`, string(metaBytes), canonicalID, tenantID)
-			if err != nil {
-				log.Printf("MERGE REQUEST METADATA ERROR: %v", err)
-				return utils.InternalServerError("Failed to merge metadata after entity merge", err.Error())
+			if _, err = tx.Exec(ctx, `
+            UPDATE entities
+            SET metadata = metadata || $1::jsonb, updated_at = NOW()
+            WHERE id = $2 AND tenant_id = $3
+        `, string(metaBytes), canonicalID, tenantID); err != nil {
+				return utils.InternalServerError("Failed to merge request metadata after entity merge", err.Error())
 			}
 		}
 
-		// Set display_name from request if canonical still has none after all merges
+		// 11. Apply request display_name if canonical still has none after all merges.
 		if req.DisplayName != nil {
-			_, err = tx.Exec(ctx, `
-				UPDATE entities
-				SET display_name = $1, updated_at = NOW()
-				WHERE id = $2 AND tenant_id = $3 AND display_name IS NULL
-			`, *req.DisplayName, canonicalID, tenantID)
-			if err != nil {
-				log.Printf("SET DISPLAY NAME ERROR: %v", err)
+			if _, err = tx.Exec(ctx, `
+            UPDATE entities
+            SET display_name = $1, updated_at = NOW()
+            WHERE id = $2 AND tenant_id = $3 AND display_name IS NULL
+        `, *req.DisplayName, canonicalID, tenantID); err != nil {
 				return utils.InternalServerError("Failed to set display_name after merge", err.Error())
 			}
 		}
 	}
 
-	_, err = tx.Exec(ctx, `SELECT fn_increment_usage($1, 'resolution')`, tenantID)
-	if err != nil {
+	//  Increment usage counter
+	if _, err = tx.Exec(ctx, `SELECT fn_increment_usage($1, 'resolution')`, tenantID); err != nil {
 		return utils.InternalServerError("Failed to increment usage", err.Error())
 	}
 
@@ -449,15 +435,14 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		return utils.InternalServerError("Failed to commit transaction", err.Error())
 	}
 
-	//  5. Fetch resolved entity and return
+	//  Fetch and return the resolved entity
 	var resp payload.ResolveEntityResponse
-	entityQuery := `
+	if err := h.DB.QueryRow(ctx, `
 		SELECT id, display_name, entity_type, total_interactions, successful_interactions,
 		       last_interaction_at, preferred_action_type, behavioral_score, metadata, created_at
 		FROM entities
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
-	`
-	if err := h.DB.QueryRow(ctx, entityQuery, canonicalID, tenantID).Scan(
+	`, canonicalID, tenantID).Scan(
 		&resp.EntityID, &resp.DisplayName, &resp.EntityType,
 		&resp.TotalInteractions, &resp.SuccessfulInteractions,
 		&resp.LastInteractionAt, &resp.PreferredActionType, &resp.BehavioralScore,

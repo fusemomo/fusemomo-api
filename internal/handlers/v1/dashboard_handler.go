@@ -4,13 +4,10 @@ import (
 	"fmt"
 	"fusemomo-api/internal/models/payload"
 	"fusemomo-api/internal/utils"
-	"math"
-	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
-	"golang.org/x/sync/errgroup"
 )
 
 // GetProfileHandler godoc
@@ -360,6 +357,7 @@ func (h *Handler) GetHistoricalUsageHandler(c fiber.Ctx) error {
 	return c.JSON(resp)
 }
 
+/*
 // GetRecommendationsHandler godoc
 // @Summary List recommendations
 // @Description Fetch paginated recommendations for the authenticated tenant
@@ -658,6 +656,7 @@ func (h *Handler) GetRecommendationStatsHandler(c fiber.Ctx) error {
 		},
 	})
 }
+*/
 
 // ── Shared handler helpers ─
 

@@ -1568,6 +1568,7 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 	})
 }
 
+/*
 // RecommendsActionsHandler godoc
 // @Summary      Get next best action recommendation (L3)
 // @Description  Scores all action types for an entity + intent using behavioral history, returns the highest-confidence recommendation. Free tier returns 402. Returns 200 with null recommendation when data is insufficient.
@@ -1925,3 +1926,4 @@ func (h *Handler) RecommendsActionsOutcomesHandler(c fiber.Ctx) error {
 		UpdatedAt:        updatedAt,
 	})
 }
+*/

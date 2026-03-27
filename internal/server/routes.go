@@ -4,6 +4,7 @@ import (
 	"time"
 
 	v1 "fusemomo-api/internal/handlers/v1"
+	"fusemomo-api/internal/handlers/v1/recommendation"
 	"fusemomo-api/internal/middlewares"
 
 	"github.com/gofiber/fiber/v3/middleware/limiter"
@@ -30,6 +31,7 @@ func (s *FiberServer) RegisterFiberRoutes() error {
 func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	apiV1 := s.App.Group("/v1")
 
+	rh := recommendation.NewHandler(s.DB)
 	rl := s.RateLimiter
 
 	//  Auth routes
@@ -77,8 +79,6 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	app.Patch("/profile", h.UpdateTenantProfileHandler)
 	app.Get("/usage", h.GetMonthlyUsageHandler)
 	app.Get("/usage/history", h.GetHistoricalUsageHandler)
-	app.Get("/recommendations", h.GetRecommendationsHandler)
-	app.Get("/recommendations/stats", h.GetRecommendationStatsHandler)
 
 	app.Get("/analytics/summary", h.GetAnalyticsSummaryHandler)
 	app.Get("/analytics/success-rate-timeseries", h.GetSuccessRateTimeSeriesHandler)
@@ -101,7 +101,7 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	admin.Get("/usage/global", h.GetGlobalTenantUsagesHandler)
 	admin.Delete("/tenants/:id", h.DeleteTenantHandler)
 
-	// Core (agent-facing, API key auth — unchanged)
+	// Core (agent-facing, API key auth)
 	core.Post("/entities/resolve", h.ResolveEntitiesHandler)
 	core.Post("/entities/:id/link", h.LinkEntityManuallyHandler)
 	core.Get("/entities", h.GetAllEntitiesHandler)
@@ -109,6 +109,6 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	core.Delete("/entities/:id", h.DeleteEntityHandler)
 	core.Post("/interactions/log", h.LogInteractionHandler)
 	core.Post("/interactions/batch", h.LogBatchInteractionsHandler)
-	core.Post("/recommends", h.RecommendsActionsHandler)
-	core.Patch("/recommends/:id/outcomes", h.RecommendsActionsOutcomesHandler)
+	core.Post("/entities/:entity_id/recommend", rh.RecommendHandler)
+	core.Patch("/recommends/:id/feedback", rh.FeedbackHandler)
 }

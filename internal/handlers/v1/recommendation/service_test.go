@@ -1,4 +1,4 @@
-package integrations
+package recommendation
 
 import (
 	"context"
@@ -6,15 +6,14 @@ import (
 	"time"
 
 	"fusemomo-api/internal/config"
-	rec "fusemomo-api/internal/handlers/v1/recommendation"
 	"fusemomo-api/internal/models"
 
 	"github.com/google/uuid"
 )
 
 // helper: build a service with a mock store and default config.
-func newTestService(store rec.Store) *rec.Service {
-	return rec.NewService(store, config.Envs)
+func newTestService(store Store) *Service {
+	return NewService(store, config.Envs)
 }
 
 func TestService_Recommend_WithData_ReturnsPrimary(t *testing.T) {
@@ -120,9 +119,9 @@ func TestService_Recommend_DataInsufficient_FlagCorrect(t *testing.T) {
 }
 
 func TestService_Recommend_DefaultLookbackApplied(t *testing.T) {
-	var capturedParams rec.FetchStatsParams
+	var capturedParams FetchStatsParams
 	store := &captureStore{
-		onFetch: func(p rec.FetchStatsParams) { capturedParams = p },
+		onFetch: func(p FetchStatsParams) { capturedParams = p },
 	}
 
 	svc := newTestService(store)
@@ -158,10 +157,10 @@ func TestService_Recommend_FetchStatsError_PropagatesError(t *testing.T) {
 //  captureStore — records FetchStatsParams for assertion
 
 type captureStore struct {
-	onFetch func(rec.FetchStatsParams)
+	onFetch func(FetchStatsParams)
 }
 
-func (c *captureStore) FetchInteractionStats(_ context.Context, p rec.FetchStatsParams) ([]models.RawInteractionRow, error) {
+func (c *captureStore) FetchInteractionStats(_ context.Context, p FetchStatsParams) ([]models.RawInteractionRow, error) {
 	if c.onFetch != nil {
 		c.onFetch(p)
 	}
@@ -172,7 +171,7 @@ func (c *captureStore) FetchFeedbackWeights(_ context.Context, _, _ uuid.UUID) (
 	return nil, nil
 }
 
-func (c *captureStore) PersistRecommendation(_ context.Context, _ rec.PersistParams) (uuid.UUID, error) {
+func (c *captureStore) PersistRecommendation(_ context.Context, _ PersistParams) (uuid.UUID, error) {
 	return uuid.New(), nil
 }
 

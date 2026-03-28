@@ -1,18 +1,17 @@
-package integrations
+package recommendation
 
 import (
 	"testing"
 	"time"
 
 	"fusemomo-api/internal/config"
-	rec "fusemomo-api/internal/handlers/v1/recommendation"
 	"fusemomo-api/internal/models"
 )
 
 // helpers
 
-func defaultScorer() *rec.Scorer {
-	return rec.NewScorer(config.Envs)
+func defaultScorer() *Scorer {
+	return NewScorer(config.Envs)
 }
 
 func now() time.Time { return time.Now().UTC() }

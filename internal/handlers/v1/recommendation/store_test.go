@@ -1,4 +1,4 @@
-package integrations
+package recommendation
 
 // store_test.go tests the Store interface contract using a mock implementation.
 // Integration tests against a real Postgres instance (testcontainers-go) are
@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	rec "fusemomo-api/internal/handlers/v1/recommendation"
 	"fusemomo-api/internal/models"
 
 	"github.com/google/uuid"
@@ -26,10 +25,10 @@ type mockStore struct {
 	feedbackErr     error
 	persistedID     uuid.UUID
 	persistErr      error
-	persistedParams *rec.PersistParams // capture for assertion
+	persistedParams *PersistParams // capture for assertion
 }
 
-func (m *mockStore) FetchInteractionStats(_ context.Context, p rec.FetchStatsParams) ([]models.RawInteractionRow, error) {
+func (m *mockStore) FetchInteractionStats(_ context.Context, p FetchStatsParams) ([]models.RawInteractionRow, error) {
 	return m.statsRows, m.statsErr
 }
 
@@ -37,7 +36,7 @@ func (m *mockStore) FetchFeedbackWeights(_ context.Context, _, _ uuid.UUID) ([]m
 	return m.feedbackRecords, m.feedbackErr
 }
 
-func (m *mockStore) PersistRecommendation(_ context.Context, p rec.PersistParams) (uuid.UUID, error) {
+func (m *mockStore) PersistRecommendation(_ context.Context, p PersistParams) (uuid.UUID, error) {
 	m.persistedParams = &p
 	return m.persistedID, m.persistErr
 }
@@ -59,7 +58,7 @@ func TestMockStore_FetchInteractionStats_ReturnsRows(t *testing.T) {
 	}
 	store := &mockStore{statsRows: expected}
 
-	rows, err := store.FetchInteractionStats(context.Background(), rec.FetchStatsParams{
+	rows, err := store.FetchInteractionStats(context.Background(), FetchStatsParams{
 		TenantID:        uuid.New(),
 		EntityID:        uuid.New(),
 		LookbackDays:    90,
@@ -80,7 +79,7 @@ func TestMockStore_FetchInteractionStats_ReturnsRows(t *testing.T) {
 func TestMockStore_FetchInteractionStats_PropagatesError(t *testing.T) {
 	store := &mockStore{statsErr: errors.New("db timeout")}
 
-	_, err := store.FetchInteractionStats(context.Background(), rec.FetchStatsParams{})
+	_, err := store.FetchInteractionStats(context.Background(), FetchStatsParams{})
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
@@ -102,7 +101,7 @@ func TestMockStore_PersistRecommendation_CapturesParams(t *testing.T) {
 	expectedID := uuid.New()
 	store := &mockStore{persistedID: expectedID}
 
-	p := rec.PersistParams{
+	p := PersistParams{
 		TenantID:          uuid.New(),
 		EntityID:          uuid.New(),
 		Intent:            "billing",
@@ -130,7 +129,7 @@ func TestMockStore_PersistRecommendation_CapturesParams(t *testing.T) {
 func TestMockStore_PersistRecommendation_PropagatesError(t *testing.T) {
 	store := &mockStore{persistErr: errors.New("constraint violation")}
 
-	_, err := store.PersistRecommendation(context.Background(), rec.PersistParams{})
+	_, err := store.PersistRecommendation(context.Background(), PersistParams{})
 	if err == nil {
 		t.Error("expected error, got nil")
 	}

@@ -73,7 +73,7 @@ func (s *billingService) GetStatus(ctx context.Context, tenantID uuid.UUID) (*mo
 		FROM tenants
 		WHERE id = $1 AND deleted_at IS NULL
 	`
-	err := s.db.QueryRow(ctx, q, tenantID).Scan(&plan, &subID, &resLimit, &intLimit, &apiLimit)
+	err := s.db.QueryRow(ctx, q, tenantID.String()).Scan(&plan, &subID, &resLimit, &intLimit, &apiLimit)
 	if err != nil {
 		return nil, fmt.Errorf("query billing status: %w", err)
 	}
@@ -130,7 +130,7 @@ func (s *billingService) ensureStripeCustomer(ctx context.Context, tenantID uuid
 	var email string
 	err := s.db.QueryRow(ctx,
 		"SELECT email, stripe_customer_id FROM tenants WHERE id = $1 AND deleted_at IS NULL",
-		tenantID,
+		tenantID.String(),
 	).Scan(&email, &existingID)
 	if err != nil {
 		return "", fmt.Errorf("fetch tenant: %w", err)
@@ -160,7 +160,7 @@ func (s *billingService) ensureStripeCustomer(ctx context.Context, tenantID uuid
 		       updated_at         = NOW()
 		WHERE  id = $2
 		RETURNING stripe_customer_id
-	`, c.ID, tenantID).Scan(&finalID)
+	`, c.ID, tenantID.String()).Scan(&finalID)
 	if err != nil {
 		return "", fmt.Errorf("persist stripe customer id: %w", err)
 	}
@@ -172,7 +172,7 @@ func (s *billingService) CreatePortalSession(ctx context.Context, tenantID uuid.
 	var stripeCustomerID *string
 	err := s.db.QueryRow(ctx,
 		"SELECT stripe_customer_id FROM tenants WHERE id = $1 AND deleted_at IS NULL",
-		tenantID,
+		tenantID.String(),
 	).Scan(&stripeCustomerID)
 	if err != nil {
 		return "", fmt.Errorf("fetch tenant: %w", err)

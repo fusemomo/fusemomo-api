@@ -4,10 +4,13 @@ import (
 	"time"
 
 	v1 "fusemomo-api/internal/handlers/v1"
+	"fusemomo-api/internal/handlers/v1/billing"
 	"fusemomo-api/internal/handlers/v1/recommendation"
 	"fusemomo-api/internal/middlewares"
+	"fusemomo-api/internal/utils"
 
 	"github.com/gofiber/fiber/v3/middleware/limiter"
+	stripe "github.com/stripe/stripe-go/v76"
 )
 
 // RegisterFiberRoutes registers all application routes and global middleware.
@@ -31,8 +34,13 @@ func (s *FiberServer) RegisterFiberRoutes() error {
 func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	apiV1 := s.App.Group("/v1")
 
+	stripe.Key = utils.GetEnv("STRIPE_SECRET_KEY", "")
+
 	rh := recommendation.NewHandler(s.DB)
+	bh := billing.NewBillingHandler(billing.NewService(s.DB))
 	rl := s.RateLimiter
+
+	apiV1.Post("/webhooks/stripe", bh.HandleStripeWebhook)
 
 	//  Auth routes
 	authLimiter := limiter.New(limiter.Config{
@@ -88,6 +96,11 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	app.Get("/analytics/top-entities", h.GetTopEntitiesHandler)
 	app.Get("/analytics/recommendation-impact", h.GetRecommendationImpactHandler)
 	app.Get("/graph", h.GetEntityGraphHandler)
+
+	// Billing routes
+	app.Post("/billing/checkout", bh.CreateCheckoutHandler)
+	app.Post("/billing/portal", bh.CreatePortalHandler)
+	app.Get("/billing/status", bh.GetBillingStatusHandler)
 
 	// Entity routes for the dashboard
 	app.Get("/entities", h.GetAllEntitiesHandler)

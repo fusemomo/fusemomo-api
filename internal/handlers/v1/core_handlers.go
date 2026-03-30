@@ -939,15 +939,14 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 	ctx := c.Context()
 
 	var resp payload.EntityDetailResponse
-	var identifiers []payload.EntityIdentifier
-	var interactions []payload.InteractionSummary
 
-	//  Step 1: Fetch core entity row first
+	// Step 1: Fetch core entity row first.
 	// We gate on entity existence before spawning any further DB work so that
 	// a 404 path never wastes two extra connection-pool checkouts.
 	{
 		var displayName, entityType, preferredAction *string
 		var metadataStr string
+
 		entityQuery := `
 			SELECT id, tenant_id, display_name, entity_type,
 			       last_interaction_at, preferred_action_type,
@@ -984,8 +983,13 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 		}
 	}
 
-	//  Step 2: Concurrently fetch identifiers, recent interactions, and live stats
+	// Step 2: Concurrently fetch identifiers, recent interactions, and live stats.
 	// Entity is confirmed to exist — safe to issue all sub-queries in parallel.
+	var (
+		identifiers  []payload.EntityIdentifier
+		interactions []payload.InteractionSummary
+	)
+
 	g, gCtx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
@@ -1000,16 +1004,25 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 		}
 		defer idRows.Close()
 
+		// Build into a goroutine-local slice; no shared writes.
+		var result []payload.EntityIdentifier
 		for idRows.Next() {
 			var ei payload.EntityIdentifier
-			if err := idRows.Scan(&ei.ID, &ei.Source, &ei.IdentifierType, &ei.IdentifierValue, &ei.Confidence, &ei.LinkStrategy, &ei.VerifiedAt); err != nil {
+			if err := idRows.Scan(
+				&ei.ID, &ei.Source, &ei.IdentifierType,
+				&ei.IdentifierValue, &ei.Confidence, &ei.LinkStrategy, &ei.VerifiedAt,
+			); err != nil {
 				return fmt.Errorf("identifiers_scan: %w", err)
 			}
-			identifiers = append(identifiers, ei)
+			result = append(result, ei)
 		}
 		if err := idRows.Err(); err != nil {
 			return fmt.Errorf("identifiers_rows_err: %w", err)
 		}
+
+		// Single assignment after the loop — safe because g.Wait() ensures
+		// this goroutine has exited before the caller reads `identifiers`.
+		identifiers = result
 		return nil
 	})
 
@@ -1027,16 +1040,23 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 		}
 		defer intRows.Close()
 
+		// Goroutine-local slice; no shared writes.
+		var result []payload.InteractionSummary
 		for intRows.Next() {
 			var is payload.InteractionSummary
-			if err := intRows.Scan(&is.ID, &is.API, &is.ActionType, &is.Outcome, &is.OccurredAt); err != nil {
+			if err := intRows.Scan(
+				&is.ID, &is.API, &is.ActionType, &is.Outcome, &is.OccurredAt,
+			); err != nil {
 				return fmt.Errorf("interactions_scan: %w", err)
 			}
-			interactions = append(interactions, is)
+			result = append(result, is)
 		}
 		if err := intRows.Err(); err != nil {
 			return fmt.Errorf("interactions_rows_err: %w", err)
 		}
+
+		// Single assignment — same reasoning as identifiers goroutine above.
+		interactions = result
 		return nil
 	})
 
@@ -1060,6 +1080,7 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 		return utils.InternalServerError("Failed to fetch entity details", err.Error())
 	}
 
+	// Nil-guard: return empty slices, not null, in the JSON response.
 	if identifiers == nil {
 		identifiers = make([]payload.EntityIdentifier, 0)
 	}
@@ -1071,7 +1092,6 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 	resp.Interactions = interactions
 
 	return c.JSON(resp)
-
 }
 
 // DeleteEntityHandler godoc

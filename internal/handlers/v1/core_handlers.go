@@ -816,8 +816,8 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 	g.Go(func() error {
 		query := fmt.Sprintf(`
 			SELECT e.id, e.tenant_id, e.display_name, e.entity_type, 
-			       (SELECT COUNT(*) FROM interactions i WHERE i.entity_id = e.id AND i.tenant_id = $1) as total_interactions, 
-			       (SELECT COUNT(*) FROM interactions i WHERE i.entity_id = e.id AND i.tenant_id = $1 AND i.outcome = 'success') as successful_interactions, 
+			       e.total_interactions, 
+			       e.successful_interactions, 
 			       e.last_interaction_at, e.preferred_action_type, 
 			       e.behavioral_score, e.metadata::text,
 			       (SELECT COUNT(*) FROM entity_identifiers ei WHERE ei.entity_id = e.id AND ei.tenant_id = $1) as identifier_count,

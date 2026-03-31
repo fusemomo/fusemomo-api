@@ -38,8 +38,8 @@ type FetchStatsParams struct {
 	MinSuccessCount int
 }
 
-// PersistParams groups inputs for PersistRecommendation.
 type PersistParams struct {
+	RecommendationID  uuid.UUID
 	TenantID          uuid.UUID
 	EntityID          uuid.UUID
 	Intent            string
@@ -193,6 +193,7 @@ func (s *pgStore) PersistRecommendation(ctx context.Context, p PersistParams) (u
 	var idStr string
 	err = s.db.QueryRow(ctx, `
 		INSERT INTO recommendations (
+		    id,
 		    tenant_id,
 		    entity_id,
 		    intent,
@@ -203,9 +204,10 @@ func (s *pgStore) PersistRecommendation(ctx context.Context, p PersistParams) (u
 		    lookback_days,
 		    min_success_count,
 		    agent_id
-		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11)
 		RETURNING id, created_at
 	`,
+		p.RecommendationID.String(),
 		p.TenantID.String(),
 		p.EntityID.String(),
 		intent,

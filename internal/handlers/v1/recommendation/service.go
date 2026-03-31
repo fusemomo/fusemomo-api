@@ -13,11 +13,11 @@ import (
 )
 
 // Service orchestrates the L3 recommendation flow:
-//   1. Fetch raw interaction stats from the DB.
-//   2. Fetch historical feedback weights (best-effort).
-//   3. Score and rank (api, action_type) pairs.
-//   4. Build the response.
-//   5. Persist asynchronously — never blocks the caller.
+//  1. Fetch raw interaction stats from the DB.
+//  2. Fetch historical feedback weights (best-effort).
+//  3. Score and rank (api, action_type) pairs.
+//  4. Build the response.
+//  5. Persist asynchronously — never blocks the caller.
 type Service struct {
 	store  Store
 	scorer *Scorer
@@ -116,6 +116,7 @@ func (s *Service) persistAsync(
 	defer cancel()
 
 	_, err := s.store.PersistRecommendation(persistCtx, PersistParams{
+		RecommendationID:  resp.RecommendationID,
 		TenantID:          req.TenantID,
 		EntityID:          req.EntityID,
 		Intent:            req.Intent,

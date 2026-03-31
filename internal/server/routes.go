@@ -122,6 +122,7 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	core.Delete("/entities/:id", h.DeleteEntityHandler)
 	core.Post("/interactions/log", h.LogInteractionHandler)
 	core.Post("/interactions/batch", h.LogBatchInteractionsHandler)
+	core.Get("/interactions", h.ListInteractionsHandler)
 	core.Post("/entities/:entity_id/recommend", rh.RecommendHandler)
 	core.Patch("/recommends/:id/feedback", rh.FeedbackHandler)
 }

@@ -43,3 +43,26 @@ type BatchInteractionLogResponse struct {
 	LastID      string    `json:"last_id"`
 	LoggedAt    time.Time `json:"logged_at"`
 }
+
+// InteractionItem is a single row returned in the list response.
+type InteractionItem struct {
+	ID          string          `json:"id"`
+	API         string          `json:"api"`
+	ActionType  string          `json:"action_type"`
+	Action      string          `json:"action"`
+	Outcome     string          `json:"outcome"`
+	Intent      *string         `json:"intent,omitempty"`
+	AgentID     *string         `json:"agent_id,omitempty"`
+	ExternalRef *string         `json:"external_ref,omitempty"`
+	Metadata    json.RawMessage `json:"metadata"`
+	OccurredAt  time.Time       `json:"occurred_at"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+// ListInteractionsResponse is the full paginated response.
+type ListInteractionsResponse struct {
+	Data   []InteractionItem `json:"data"`
+	Total  int               `json:"total"`
+	Limit  int               `json:"limit"`
+	Offset int               `json:"offset"`
+}

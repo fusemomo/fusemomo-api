@@ -153,10 +153,9 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		SELECT DISTINCT ei.entity_id
 		FROM entity_identifiers ei
 		JOIN entities e ON e.id = ei.entity_id
+		JOIN unnest($2::text[], $3::text[]) AS t(src, val)
+		  ON (ei.source = t.src OR ei.identifier_type = t.src) AND ei.identifier_value = t.val
 		WHERE ei.tenant_id = $1
-		  AND (ei.source, ei.identifier_value) IN (
-		      SELECT * FROM unnest($2::text[], $3::text[])
-		  )
 		  AND e.deleted_at IS NULL
 	`
 	rows, err := tx.Query(ctx, lookupSQL, tenantID, srcSlice, valSlice)
@@ -250,7 +249,7 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 			}
 		}
 
-	// ── Case C: Multiple matches — merge all into the oldest entity ────────────
+	//  Case C: Multiple matches — merge all into the oldest entity
 	default:
 		// Convert matchedEntityIDs to []string for pgx ANY($1::uuid[]) compatibility
 		matchedIDStrs := make([]string, len(matchedEntityIDs))
@@ -949,6 +948,7 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 
 		entityQuery := `
 			SELECT id, tenant_id, display_name, entity_type,
+			       total_interactions, successful_interactions,
 			       last_interaction_at, preferred_action_type,
 			       behavioral_score, metadata::text, created_at, updated_at
 			FROM entities
@@ -956,6 +956,7 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 		`
 		if err := h.DB.QueryRow(ctx, entityQuery, entityID, tenantID).Scan(
 			&resp.ID, &resp.TenantID, &displayName, &entityType,
+			&resp.TotalInteractions, &resp.SuccessfulInteractions,
 			&resp.LastInteractionAt, &preferredAction,
 			&resp.BehavioralScore, &metadataStr, &resp.CreatedAt, &resp.UpdatedAt,
 		); err != nil {
@@ -1057,21 +1058,6 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 
 		// Single assignment — same reasoning as identifiers goroutine above.
 		interactions = result
-		return nil
-	})
-
-	// Live counts — source of truth for the displayed totals.
-	g.Go(func() error {
-		countQuery := `
-			SELECT COUNT(*), COUNT(*) FILTER (WHERE outcome = 'success')
-			FROM interactions
-			WHERE entity_id = $1 AND tenant_id = $2
-		`
-		if err := h.DB.QueryRow(gCtx, countQuery, entityID, tenantID).Scan(
-			&resp.TotalInteractions, &resp.SuccessfulInteractions,
-		); err != nil {
-			return fmt.Errorf("live_counts_query: %w", err)
-		}
 		return nil
 	})
 
@@ -1585,6 +1571,186 @@ func (h *Handler) LogBatchInteractionsHandler(c fiber.Ctx) error {
 		FirstID:     firstID,
 		LastID:      lastID,
 		LoggedAt:    time.Now().UTC(),
+	})
+}
+
+// ListInteractionsHandler godoc
+// @Summary      List interactions for an entity
+// @Description  Returns a filtered, paginated list of interactions from the L2 Behavioral Graph for a given entity. Used for debugging, demo, and audit purposes.
+// @Tags         Core
+// @Security     ApiKeyAuth
+// @Accept       json
+// @Produce      json
+// @Param        entity_id   query  string  true   "Entity UUID to filter by"
+// @Param        intent      query  string  false  "Filter by intent (e.g. book_demo)"
+// @Param        action      query  string  false  "Filter by action (e.g. send_cold_email)"
+// @Param        outcome     query  string  false  "Filter by outcome (success|failed|pending|ignored|unknown)"
+// @Param        api         query  string  false  "Filter by API (e.g. linkedin)"
+// @Param        limit       query  int     false  "Max results to return (default 50, max 200)"
+// @Param        offset      query  int     false  "Pagination offset (default 0)"
+// @Success      200 {object} payload.ListInteractionsResponse
+// @Failure      400 {object} utils.APIError
+// @Failure      401 {object} utils.APIError
+// @Failure      404 {object} utils.APIError
+// @Failure      500 {object} utils.APIError
+// @Router       /v1/core/interactions [get]
+func (h *Handler) ListInteractionsHandler(c fiber.Ctx) error {
+	tenantIDStr := c.Locals("tenant_id")
+	if tenantIDStr == nil {
+		return utils.Unauthorized("Missing tenant context")
+	}
+	tenantID, err := uuid.Parse(fmt.Sprintf("%v", tenantIDStr))
+	if err != nil {
+		return utils.Unauthorized("Invalid tenant ID format")
+	}
+
+	//  Query params
+	entityIDStr := c.Query("entity_id")
+	if entityIDStr == "" {
+		return utils.BadRequest("Query parameter 'entity_id' is required")
+	}
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		return utils.BadRequest("Query parameter 'entity_id' is not a valid UUID")
+	}
+
+	intent := c.Query("intent")
+	action := c.Query("action")
+	outcome := c.Query("outcome")
+	api := c.Query("api")
+
+	limit, err := strconv.Atoi(c.Query("limit", "50"))
+	if err != nil || limit <= 0 || limit > 200 {
+		return utils.BadRequest("Query parameter 'limit' must be between 1 and 200")
+	}
+	offset, err := strconv.Atoi(c.Query("offset", "0"))
+	if err != nil || offset < 0 {
+		return utils.BadRequest("Query parameter 'offset' must be 0 or greater")
+	}
+	//  Validate outcome value if provided
+	validOutcomes := map[string]bool{
+		"success": true, "failed": true, "pending": true,
+		"ignored": true, "unknown": true,
+	}
+	if outcome != "" && !validOutcomes[outcome] {
+		return utils.BadRequest("Query parameter 'outcome' must be one of: success, failed, pending, ignored, unknown")
+	}
+
+	ctx := c.Context()
+
+	//  Verify entity belongs to this tenant
+	var entityExists bool
+	if err := h.DB.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM entities
+			WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+		)
+	`, entityID, tenantID).Scan(&entityExists); err != nil {
+		return utils.InternalServerError("Failed to verify entity", err.Error())
+	}
+	if !entityExists {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error":     "not_found",
+			"message":   "Entity not found or does not belong to your account",
+			"entity_id": entityIDStr,
+		})
+	}
+
+	//  Build dynamic query
+	// Conditions and args built in tandem so $N positions always match.
+	conditions := []string{
+		"tenant_id = $1",
+		"entity_id = $2",
+	}
+	args := []any{tenantID, entityID}
+	n := 3 // next placeholder index
+
+	if intent != "" {
+		conditions = append(conditions, fmt.Sprintf("intent = $%d", n))
+		args = append(args, intent)
+		n++
+	}
+	if action != "" {
+		conditions = append(conditions, fmt.Sprintf("action = $%d", n))
+		args = append(args, action)
+		n++
+	}
+	if outcome != "" {
+		conditions = append(conditions, fmt.Sprintf("outcome = $%d", n))
+		args = append(args, outcome)
+		n++
+	}
+	if api != "" {
+		conditions = append(conditions, fmt.Sprintf("api = $%d", n))
+		args = append(args, api)
+		n++
+	}
+
+	where := "WHERE " + strings.Join(conditions, " AND ")
+
+	// Total count for pagination metadata
+	var total int
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM interactions %s`, where)
+	if err := h.DB.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return utils.InternalServerError("Failed to count interactions", err.Error())
+	}
+
+	// Data query — append limit/offset args
+	args = append(args, limit, offset)
+	dataQuery := fmt.Sprintf(`
+		SELECT
+			id,
+			api,
+			action_type,
+			action,
+			outcome,
+			intent,
+			agent_id,
+			external_ref,
+			metadata,
+			occurred_at,
+			created_at
+		FROM interactions
+		%s
+		ORDER BY occurred_at DESC
+		LIMIT $%d OFFSET $%d
+	`, where, n, n+1)
+
+	rows, err := h.DB.Query(ctx, dataQuery, args...)
+	if err != nil {
+		return utils.InternalServerError("Failed to fetch interactions", err.Error())
+	}
+	defer rows.Close()
+
+	interactions := make([]payload.InteractionItem, 0)
+	for rows.Next() {
+		var item payload.InteractionItem
+		if err := rows.Scan(
+			&item.ID,
+			&item.API,
+			&item.ActionType,
+			&item.Action,
+			&item.Outcome,
+			&item.Intent,
+			&item.AgentID,
+			&item.ExternalRef,
+			&item.Metadata,
+			&item.OccurredAt,
+			&item.CreatedAt,
+		); err != nil {
+			return utils.InternalServerError("Failed to scan interaction row", err.Error())
+		}
+		interactions = append(interactions, item)
+	}
+	if err := rows.Err(); err != nil {
+		return utils.InternalServerError("Error reading interaction rows", err.Error())
+	}
+
+	return c.Status(fiber.StatusOK).JSON(payload.ListInteractionsResponse{
+		Data:   interactions,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
 	})
 }
 

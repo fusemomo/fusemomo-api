@@ -153,10 +153,9 @@ func (h *Handler) ResolveEntitiesHandler(c fiber.Ctx) error {
 		SELECT DISTINCT ei.entity_id
 		FROM entity_identifiers ei
 		JOIN entities e ON e.id = ei.entity_id
+		JOIN unnest($2::text[], $3::text[]) AS t(src, val)
+		  ON (ei.source = t.src OR ei.identifier_type = t.src) AND ei.identifier_value = t.val
 		WHERE ei.tenant_id = $1
-		  AND (ei.source, ei.identifier_value) IN (
-		      SELECT * FROM unnest($2::text[], $3::text[])
-		  )
 		  AND e.deleted_at IS NULL
 	`
 	rows, err := tx.Query(ctx, lookupSQL, tenantID, srcSlice, valSlice)

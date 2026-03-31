@@ -68,28 +68,52 @@ func (h *Handler) GetAnalyticsSummaryHandler(c fiber.Ctx) error {
 	}
 
 	var cur periodMetrics
-	err = h.DB.QueryRow(c.Context(), `
-		SELECT
-			COUNT(*)                                               AS total,
-			COUNT(*) FILTER (WHERE outcome = 'success')           AS successful,
-			COUNT(DISTINCT entity_id)                             AS active_entities,
-			COALESCE(
-				(SELECT action_type FROM interactions
-				 WHERE tenant_id = $1 AND occurred_at BETWEEN $2 AND $3
-				 GROUP BY action_type ORDER BY COUNT(*) DESC LIMIT 1),
-			''),
-			COALESCE(
-				(SELECT COUNT(*) FROM interactions
-				 WHERE tenant_id = $1 AND occurred_at BETWEEN $2 AND $3
-				 GROUP BY action_type ORDER BY COUNT(*) DESC LIMIT 1),
-			0)
-		FROM interactions
-		WHERE tenant_id = $1
-		  AND occurred_at BETWEEN $2 AND $3
-	`, tenantID, periodStart, periodEnd).Scan(
-		&cur.total, &cur.successful, &cur.activeEntities,
-		&cur.mostUsedAction, &cur.mostUsedCount,
-	)
+	if period == "all" {
+		err = h.DB.QueryRow(c.Context(), `
+			SELECT
+				COALESCE(SUM(total_interactions), 0)::bigint,
+				COALESCE(SUM(successful_interactions), 0)::bigint,
+				COUNT(id)::bigint,
+				COALESCE(
+					(SELECT action_type FROM interactions
+					 WHERE tenant_id = $1 AND occurred_at BETWEEN $2 AND $3
+					 GROUP BY action_type ORDER BY COUNT(*) DESC LIMIT 1),
+				''),
+				COALESCE(
+					(SELECT COUNT(*) FROM interactions
+					 WHERE tenant_id = $1 AND occurred_at BETWEEN $2 AND $3
+					 GROUP BY action_type ORDER BY COUNT(*) DESC LIMIT 1),
+				0)::bigint
+			FROM entities
+			WHERE tenant_id = $1 AND deleted_at IS NULL
+		`, tenantID, periodStart, periodEnd).Scan(
+			&cur.total, &cur.successful, &cur.activeEntities,
+			&cur.mostUsedAction, &cur.mostUsedCount,
+		)
+	} else {
+		err = h.DB.QueryRow(c.Context(), `
+			SELECT
+				COUNT(*)                                               AS total,
+				COUNT(*) FILTER (WHERE outcome = 'success')           AS successful,
+				COUNT(DISTINCT entity_id)                             AS active_entities,
+				COALESCE(
+					(SELECT action_type FROM interactions
+					 WHERE tenant_id = $1 AND occurred_at BETWEEN $2 AND $3
+					 GROUP BY action_type ORDER BY COUNT(*) DESC LIMIT 1),
+				''),
+				COALESCE(
+					(SELECT COUNT(*) FROM interactions
+					 WHERE tenant_id = $1 AND occurred_at BETWEEN $2 AND $3
+					 GROUP BY action_type ORDER BY COUNT(*) DESC LIMIT 1),
+				0)
+			FROM interactions
+			WHERE tenant_id = $1
+			  AND occurred_at BETWEEN $2 AND $3
+		`, tenantID, periodStart, periodEnd).Scan(
+			&cur.total, &cur.successful, &cur.activeEntities,
+			&cur.mostUsedAction, &cur.mostUsedCount,
+		)
+	}
 	if err != nil {
 		log.Printf("[GetAnalyticsSummaryHandler] current period query error: %v", err)
 		return utils.InternalServerError("Failed to fetch analytics summary", err.Error())

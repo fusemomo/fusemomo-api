@@ -1,6 +1,818 @@
+basePath: /
+definitions:
+  fiber.Map:
+    additionalProperties: {}
+    type: object
+  fusemomo-api_internal_models.BillingStatusResponse:
+    properties:
+      connected_api_limit:
+        type: integer
+      has_active_subscription:
+        type: boolean
+      monthly_interaction_limit:
+        type: integer
+      monthly_resolution_limit:
+        type: integer
+      plan:
+        type: string
+    type: object
+  fusemomo-api_internal_models.CheckoutRequest:
+    properties:
+      price_id:
+        type: string
+    required:
+    - price_id
+    type: object
+  fusemomo-api_internal_models.CheckoutResponse:
+    properties:
+      checkout_url:
+        type: string
+    type: object
+  fusemomo-api_internal_models.OpportunityEntry:
+    properties:
+      action_type:
+        type: string
+      api:
+        type: string
+      composite_score:
+        type: number
+      feedback_weight:
+        type: number
+      is_primary:
+        type: boolean
+      last_occurred_at:
+        type: string
+      last_success_at:
+        type: string
+      raw_success_rate:
+        type: number
+      recency_score:
+        type: number
+      success_count:
+        type: integer
+      total_count:
+        type: integer
+    type: object
+  fusemomo-api_internal_models.PortalResponse:
+    properties:
+      portal_url:
+        type: string
+    type: object
+  fusemomo-api_internal_models.RecommendResponse:
+    properties:
+      confidence_score:
+        description: primary.CompositeScore, or 0
+        type: number
+      data_sufficient:
+        description: false if below MinInteractionsForConfidence
+        type: boolean
+      entity_id:
+        type: string
+      generated_at:
+        type: string
+      intent:
+        type: string
+      lookback_days:
+        type: integer
+      opportunity_set:
+        description: all qualifying pairs, ranked
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models.OpportunityEntry'
+        type: array
+      primary:
+        allOf:
+        - $ref: '#/definitions/fusemomo-api_internal_models.OpportunityEntry'
+        description: nil if no qualifying data
+      recommendation_id:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.APIKeyInfo:
+    properties:
+      expires_at:
+        type: string
+      id:
+        type: string
+      key_prefix:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+      status:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.AdminTenantInfo:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      plan:
+        type: string
+      usage:
+        $ref: '#/definitions/fusemomo-api_internal_models_payload.AdminTenantUsage'
+    type: object
+  fusemomo-api_internal_models_payload.AdminTenantUsage:
+    properties:
+      interactions:
+        type: integer
+      resolutions:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.AdminTenantsResponse:
+    properties:
+      tenants:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.AdminTenantInfo'
+        type: array
+      total:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.BatchInteractionLogRequest:
+    properties:
+      interactions:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.InteractionLogRequest'
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - interactions
+    type: object
+  fusemomo-api_internal_models_payload.BatchInteractionLogResponse:
+    properties:
+      first_id:
+        type: string
+      last_id:
+        type: string
+      logged_at:
+        type: string
+      logged_count:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.CreateAPIKeyRequest:
+    properties:
+      expires_in:
+        enum:
+        - "30"
+        - "90"
+        - forever
+        type: string
+      name:
+        maxLength: 255
+        minLength: 3
+        type: string
+    required:
+    - expires_in
+    - name
+    type: object
+  fusemomo-api_internal_models_payload.CreateAPIKeyResponse:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      key:
+        description: Keep secret, full key
+        type: string
+      key_prefix:
+        type: string
+      name:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.EntitiesListResponse:
+    properties:
+      entities:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.EntityResponse'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.EntityDeleteResponse:
+    properties:
+      anonymized:
+        type: boolean
+      entity_id:
+        type: string
+      erased_at:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.EntityDetailResponse:
+    properties:
+      behavioral_score:
+        type: number
+      created_at:
+        type: string
+      display_name:
+        type: string
+      entity_type:
+        type: string
+      id:
+        type: string
+      identifier_count:
+        type: integer
+      identifier_sources:
+        items:
+          type: string
+        type: array
+      identifiers:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.EntityIdentifier'
+        type: array
+      last_interaction_at:
+        type: string
+      metadata:
+        additionalProperties: true
+        type: object
+      preferred_action_type:
+        type: string
+      recent_interactions:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.InteractionSummary'
+        type: array
+      successful_interactions:
+        type: integer
+      tenant_id:
+        type: string
+      total_interactions:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.EntityIdentifier:
+    properties:
+      confidence:
+        type: number
+      id:
+        type: string
+      identifier_type:
+        type: string
+      identifier_value:
+        type: string
+      link_strategy:
+        type: string
+      source:
+        type: string
+      verified_at:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.EntityResponse:
+    properties:
+      behavioral_score:
+        type: number
+      created_at:
+        type: string
+      display_name:
+        type: string
+      entity_type:
+        type: string
+      id:
+        type: string
+      identifier_count:
+        type: integer
+      identifier_sources:
+        items:
+          type: string
+        type: array
+      last_interaction_at:
+        type: string
+      metadata:
+        additionalProperties: true
+        type: object
+      preferred_action_type:
+        type: string
+      successful_interactions:
+        type: integer
+      tenant_id:
+        type: string
+      total_interactions:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.FeedbackRequest:
+    properties:
+      outcome_interaction_id:
+        description: optional UUID
+        type: string
+      was_followed:
+        type: boolean
+    type: object
+  fusemomo-api_internal_models_payload.FeedbackResponse:
+    properties:
+      outcome:
+        type: string
+      recommendation_id:
+        type: string
+      updated_at:
+        type: string
+      was_followed:
+        type: boolean
+    type: object
+  fusemomo-api_internal_models_payload.GlobalUsageResponse:
+    properties:
+      by_plan:
+        additionalProperties:
+          type: integer
+        type: object
+      total_entities:
+        type: integer
+      total_interactions:
+        type: integer
+      total_resolutions_this_month:
+        type: integer
+      total_tenants:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.GraphDataResponse:
+    properties:
+      entities:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.GraphEntity'
+        type: array
+      entity_links:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.GraphEntityLink'
+        type: array
+      identifiers:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.GraphIdentifier'
+        type: array
+      interactions:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.GraphInteractionEdge'
+        type: array
+      total_entities:
+        type: integer
+      truncated:
+        type: boolean
+    type: object
+  fusemomo-api_internal_models_payload.GraphEntity:
+    properties:
+      behavioral_score:
+        type: number
+      created_at:
+        type: string
+      display_name:
+        type: string
+      entity_type:
+        type: string
+      id:
+        type: string
+      preferred_action_type:
+        type: string
+      successful_interactions:
+        type: integer
+      total_interactions:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.GraphEntityLink:
+    properties:
+      canonical_entity_id:
+        type: string
+      confidence:
+        type: number
+      id:
+        type: string
+      link_strategy:
+        type: string
+      merged_entity_id:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.GraphIdentifier:
+    properties:
+      confidence:
+        type: number
+      entity_id:
+        type: string
+      id:
+        type: string
+      identifier_type:
+        type: string
+      identifier_value:
+        type: string
+      link_strategy:
+        type: string
+      source:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.GraphInteractionEdge:
+    properties:
+      api:
+        type: string
+      dominant_outcome:
+        type: string
+      entity_id:
+        type: string
+      last_occurred_at:
+        type: string
+      success_count:
+        type: integer
+      total_count:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.InteractionItem:
+    properties:
+      action:
+        type: string
+      action_type:
+        type: string
+      agent_id:
+        type: string
+      api:
+        type: string
+      created_at:
+        type: string
+      external_ref:
+        type: string
+      id:
+        type: string
+      intent:
+        type: string
+      metadata:
+        items:
+          type: integer
+        type: array
+      occurred_at:
+        type: string
+      outcome:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.InteractionLogRequest:
+    properties:
+      action:
+        maxLength: 255
+        type: string
+      action_type:
+        maxLength: 100
+        type: string
+      agent_id:
+        maxLength: 255
+        type: string
+      api:
+        maxLength: 100
+        type: string
+      entity_id:
+        type: string
+      external_ref:
+        maxLength: 500
+        type: string
+      intent:
+        maxLength: 255
+        type: string
+      metadata:
+        additionalProperties: true
+        type: object
+      occurred_at:
+        type: string
+      outcome:
+        enum:
+        - success
+        - failed
+        - pending
+        - ignored
+        - unknown
+        type: string
+    required:
+    - action
+    - action_type
+    - api
+    - entity_id
+    - outcome
+    type: object
+  fusemomo-api_internal_models_payload.InteractionLogResponse:
+    properties:
+      entity_id:
+        type: string
+      interaction_id:
+        type: string
+      logged_at:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.InteractionSummary:
+    properties:
+      action_type:
+        type: string
+      api:
+        type: string
+      id:
+        type: string
+      occurred_at:
+        type: string
+      outcome:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.LinkIdentifiersRequest:
+    properties:
+      confidence:
+        description: 0.0–1.0
+        type: number
+      identifiers:
+        additionalProperties:
+          type: string
+        type: object
+      link_strategy:
+        description: '"deterministic" | "probabilistic"'
+        type: string
+    required:
+    - identifiers
+    type: object
+  fusemomo-api_internal_models_payload.LinkIdentifiersResponse:
+    properties:
+      entity_id:
+        type: string
+      identifiers:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.EntityIdentifier'
+        type: array
+      linked_count:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.ListInteractionsResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.InteractionItem'
+        type: array
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.ProfileResponse:
+    properties:
+      avatar_url:
+        type: string
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      plan:
+        type: string
+      role:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.RecommendRequest:
+    properties:
+      agent_id:
+        type: string
+      intent:
+        type: string
+      lookback_days:
+        description: 0 = service default (90)
+        type: integer
+      min_success_count:
+        description: 0 = service default (1)
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.ResolveEntityRequest:
+    properties:
+      display_name:
+        type: string
+      entity_type:
+        type: string
+      identifiers:
+        additionalProperties:
+          type: string
+        description: Identifiers maps source name → identifier value.
+        type: object
+      metadata:
+        additionalProperties: {}
+        type: object
+    required:
+    - identifiers
+    type: object
+  fusemomo-api_internal_models_payload.ResolveEntityResponse:
+    properties:
+      behavioral_score:
+        type: number
+      created_at:
+        type: string
+      display_name:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      identifiers:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.EntityIdentifier'
+        type: array
+      last_interaction_at:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      preferred_action_type:
+        type: string
+      successful_interactions:
+        type: integer
+      total_interactions:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.UpdateProfileRequest:
+    properties:
+      avatar_url:
+        type: string
+      name:
+        maxLength: 255
+        minLength: 1
+        type: string
+    type: object
+  fusemomo-api_internal_models_payload.UpdateTenantPlanRequest:
+    properties:
+      monthly_resolution_limit:
+        type: integer
+      plan:
+        enum:
+        - free
+        - builder
+        - enterprise
+        type: string
+    required:
+    - monthly_resolution_limit
+    - plan
+    type: object
+  fusemomo-api_internal_models_payload.UsageHistoryResponse:
+    properties:
+      months:
+        items:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.UsageMonth'
+        type: array
+    type: object
+  fusemomo-api_internal_models_payload.UsageMonth:
+    properties:
+      interactions:
+        type: integer
+      period:
+        type: string
+      resolutions:
+        type: integer
+    type: object
+  fusemomo-api_internal_models_payload.UsageResponse:
+    properties:
+      interaction_count:
+        type: integer
+      interaction_limit:
+        type: integer
+      percentage_used:
+        type: number
+      period:
+        type: string
+      plan:
+        type: string
+      recommendation_count:
+        type: integer
+      resolution_count:
+        type: integer
+      resolution_limit:
+        type: integer
+    type: object
+  fusemomo-api_internal_utils.APIError:
+    properties:
+      code:
+        type: integer
+      details: {}
+      message:
+        type: string
+    type: object
+host: https://api.fusemomo.com
 info:
-  contact: {}
+  contact:
+    email: team@fusemomo.com
+    name: Fusemomo Support
+    url: https://fusemomo.com
+  description: Behavioral Intelligence for AI Agents that act through APIs.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  title: Fusemomo API
+  version: "1.0"
 paths:
+  /auth/login/{provider}:
+    get:
+      description: Redirects to Supabase OAuth for Google or GitHub
+      parameters:
+      - description: OAuth Provider (google or github)
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Redirect URL after login
+        in: query
+        name: redirect_to
+        type: string
+      responses:
+        "307":
+          description: Redirects to Supabase
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      summary: Social Login
+      tags:
+      - Auth
+  /auth/session:
+    delete:
+      description: Deletes the server-side session record and clears the HttpOnly
+        session cookie.
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Session destroyed. Cookie cleared.
+      security:
+      - SessionAuth: []
+      summary: Destroy the current session (logout)
+      tags:
+      - Auth
+    post:
+      consumes:
+      - application/json
+      description: Validates a Supabase access_token (ES256 JWT), looks up the tenant
+        record, creates
+      parameters:
+      - description: Supabase access token obtained from the Supabase client SDK
+        in: body
+        name: request
+        required: true
+        schema:
+          properties:
+            access_token:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              user:
+                properties:
+                  auth_user_id:
+                    type: string
+                  plan:
+                    type: string
+                  role:
+                    type: string
+                  tenant_id:
+                    type: string
+                type: object
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      summary: Create a server-side session
+      tags:
+      - Auth
+  /health/db:
+    get:
+      description: Check if the database connection is alive.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      summary: Check database health
+      tags:
+      - Health
   /ping:
     get:
       description: Returns a simple pong message to verify the server is running.
@@ -16,4 +828,1372 @@ paths:
       summary: Ping the server
       tags:
       - Health
+  /v1/admin/tenants:
+    get:
+      description: Returns all tenant records with current month usage stats and pagination
+        support
+      parameters:
+      - description: Filter by plan tier (free, builder, enterprise)
+        in: query
+        name: plan
+        type: string
+      - default: 50
+        description: Pagination limit
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.AdminTenantsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: List all tenants (admin view)
+      tags:
+      - Admin
+  /v1/admin/tenants/{id}:
+    delete:
+      description: Hard delete a tenant and all its associated data (admin only)
+      parameters:
+      - description: Tenant ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Delete a tenant
+      tags:
+      - Admin
+  /v1/admin/tenants/{id}/plan:
+    patch:
+      consumes:
+      - application/json
+      description: Updates a tenant's plan tier and limits directly in the database
+        (admin override)
+      parameters:
+      - description: Tenant ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Plan Update Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.UpdateTenantPlanRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Manually change a tenant's plan
+      tags:
+      - Admin
+  /v1/admin/usage/global:
+    get:
+      description: Aggregates usage metrics across all tenants for platform monitoring
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.GlobalUsageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Global usage stats
+      tags:
+      - Admin
+  /v1/app:
+    delete:
+      description: Marks the currently authenticated tenant profile as deleted. This
+        is irreversible via the UI.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Delete tenant profile (Soft Delete)
+      tags:
+      - Dashboard
+  /v1/app/analytics/activity-heatmap:
+    get:
+      description: Daily interaction counts for calendar heatmap (max 90d)
+      parameters:
+      - description: 7d | 30d | 90d (no 'all')
+        in: query
+        name: period
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fiber.Map'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Activity heatmap
+      tags:
+      - Analytics
+  /v1/app/analytics/api-distribution:
+    get:
+      description: Percentage distribution of API usage for pie/donut chart
+      parameters:
+      - description: 7d | 30d | 90d | all
+        in: query
+        name: period
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fiber.Map'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: API call distribution
+      tags:
+      - Analytics
+  /v1/app/analytics/performance-by-action-type:
+    get:
+      description: Success rates broken down by action_type for bar chart
+      parameters:
+      - description: 7d | 30d | 90d | all
+        in: query
+        name: period
+        type: string
+      - description: 'success_rate | count | name (default: success_rate)'
+        in: query
+        name: sort_by
+        type: string
+      - description: '1-50 (default: 10)'
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fiber.Map'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Performance by action type
+      tags:
+      - Analytics
+  /v1/app/analytics/recommendation-impact:
+    get:
+      description: Compares outcomes with vs. without recommendations (Builder+ only)
+      parameters:
+      - description: 7d | 30d | 90d | all
+        in: query
+        name: period
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fiber.Map'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Recommendation ROI impact
+      tags:
+      - Analytics
+  /v1/app/analytics/success-rate-timeseries:
+    get:
+      description: Time-series data of success rates for line chart visualization
+      parameters:
+      - description: 7d | 30d | 90d | all
+        in: query
+        name: period
+        type: string
+      - description: day | week | month (auto-selected if omitted)
+        in: query
+        name: granularity
+        type: string
+      - description: Include recommendation lift data (Builder+ only)
+        in: query
+        name: include_recommendations
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fiber.Map'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "402":
+          description: Payment Required
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Success rate time series
+      tags:
+      - Analytics
+  /v1/app/analytics/summary:
+    get:
+      description: High-level summary statistics for the analytics dashboard
+      parameters:
+      - description: 'Time range: 7d | 30d | 90d | all'
+        in: query
+        name: period
+        required: true
+        type: string
+      - description: Include previous-period comparison (default true)
+        in: query
+        name: compare_to_previous
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fiber.Map'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Analytics summary
+      tags:
+      - Analytics
+  /v1/app/analytics/top-entities:
+    get:
+      description: Entities ranked by success rate or interaction count
+      parameters:
+      - description: 7d | 30d | 90d | all
+        in: query
+        name: period
+        type: string
+      - description: 'success_rate | interaction_count (default: success_rate)'
+        in: query
+        name: sort_by
+        type: string
+      - description: 'Minimum interactions to qualify (default: 10)'
+        in: query
+        name: min_interactions
+        type: integer
+      - description: '1-50 (default: 10)'
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fiber.Map'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Top performing entities
+      tags:
+      - Analytics
+  /v1/app/billing/checkout:
+    post:
+      consumes:
+      - application/json
+      description: Creates a Stripe-hosted Checkout Session for the authenticated
+        tenant.
+      parameters:
+      - description: Price ID to subscribe to
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/fusemomo-api_internal_models.CheckoutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models.CheckoutResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Create a Stripe Checkout Session
+      tags:
+      - Billing
+  /v1/app/billing/portal:
+    post:
+      description: Creates a Stripe Customer Portal Session for the authenticated
+        tenant.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models.PortalResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Open the Stripe Customer Portal
+      tags:
+      - Billing
+  /v1/app/billing/status:
+    get:
+      description: Returns the tenant's current plan name, active subscription flag,
+        and quota limits.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models.BillingStatusResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Get billing status
+      tags:
+      - Billing
+  /v1/app/graph:
+    get:
+      description: Returns entities, identifiers, interactions, and entity links for
+        graph visualization
+      parameters:
+      - description: Filter by entity type
+        in: query
+        name: entity_type
+        type: string
+      - description: Minimum behavioral score (0.0–1.0)
+        in: query
+        name: min_score
+        type: number
+      - description: Max entities to return (default 200, max 500)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.GraphDataResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Behavioral Entity Graph data
+      tags:
+      - Graph
+  /v1/app/key:
+    get:
+      description: Fetch all active API keys for the authenticated tenant
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/fusemomo-api_internal_models_payload.APIKeyInfo'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: List All API keys which have status active
+      tags:
+      - API_key
+  /v1/app/key/{id}:
+    delete:
+      description: Delete an existing API key for an AI agent
+      parameters:
+      - description: API Key ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Delete API keys
+      tags:
+      - API_key
+  /v1/app/key/{id}/revoke:
+    post:
+      description: Update the status of an API key to 'revoked'
+      parameters:
+      - description: API Key ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Revoke an API key
+      tags:
+      - API_key
+  /v1/app/key/all:
+    get:
+      description: Fetch all API keys (active, expired, revoked) for the authenticated
+        tenant
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/fusemomo-api_internal_models_payload.APIKeyInfo'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: List all API keys
+      tags:
+      - API_key
+  /v1/app/key/create:
+    post:
+      consumes:
+      - application/json
+      description: Create API keys for AI agent to access Fusemomo
+      parameters:
+      - description: API Key Request
+        in: body
+        name: req
+        required: true
+        schema:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.CreateAPIKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.CreateAPIKeyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Create API keys
+      tags:
+      - API_key
+  /v1/app/key/sync-expired:
+    post:
+      description: Update the status of all expired API keys for the authenticated
+        tenant
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Sync expired API keys
+      tags:
+      - API_key
+  /v1/app/profile:
+    get:
+      description: Fetch the currently authenticated tenant profile details
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.ProfileResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Get tenant profile
+      tags:
+      - Dashboard
+    patch:
+      consumes:
+      - application/json
+      description: Partially update tenant profile fields (name, avatar_url)
+      parameters:
+      - description: Update Profile Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.ProfileResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Update tenant profile
+      tags:
+      - Dashboard
+  /v1/app/usage:
+    get:
+      description: Fetch current month's usage logs and tenant limits
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.UsageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Get current month's usage stats
+      tags:
+      - Dashboard
+  /v1/app/usage/history:
+    get:
+      description: Fetch time-series usage data for analytics dashboard (builder &
+        enterprise only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.UsageHistoryResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - SessionAuth: []
+      summary: Get historical usage data (last 12 months)
+      tags:
+      - Dashboard
+  /v1/core/entities:
+    get:
+      description: Returns a paginated list of entities matching the filters
+      parameters:
+      - default: 50
+        description: Results per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      - description: Filter by entity type
+        in: query
+        name: entity_type
+        type: string
+      - description: Filter by API source
+        in: query
+        name: source
+        type: string
+      - description: Filter by behavioral score
+        in: query
+        name: min_score
+        type: number
+      - description: 'Sort field (default: last_interaction_at)'
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort order (asc/desc)
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.EntitiesListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - ApiKeyAuth: []
+      summary: List all entities
+      tags:
+      - Core
+  /v1/core/entities/{entity_id}/recommend:
+    post:
+      consumes:
+      - application/json
+      description: Scores all (api, action_type) pairs for an entity + intent using
+        behavioral history.
+      parameters:
+      - description: Entity UUID
+        in: path
+        name: entity_id
+        required: true
+        type: string
+      - description: Recommendation parameters
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.RecommendRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models.RecommendResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "402":
+          description: Payment Required
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - ApiKeyAuth: []
+      summary: Get L3 ranked recommendations for an entity
+      tags:
+      - Core
+  /v1/core/entities/{id}:
+    delete:
+      description: Irreversibly redacts an entity's PII, identifiers, and metadata,
+        leaving only anonymized behavioral records for analytics.
+      parameters:
+      - description: Entity ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.EntityDeleteResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - ApiKeyAuth: []
+      summary: Anonymize an entity (GDPR erasure)
+      tags:
+      - Core
+    get:
+      description: Returns the canonical entity details along with its graph identifiers
+        and recent behavior log
+      parameters:
+      - description: Entity ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.EntityDetailResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - ApiKeyAuth: []
+      summary: Get a specific entity
+      tags:
+      - Core
+  /v1/core/entities/{id}/link:
+    post:
+      consumes:
+      - application/json
+      description: Adds one or more new identifiers to an existing entity. Returns
+        409 if any identifier already belongs to a different entity, so the caller
+        can decide whether to merge or reject.
+      parameters:
+      - description: Entity UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Link request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.LinkIdentifiersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.LinkIdentifiersResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - ApiKeyAuth: []
+      summary: Manually link identifiers to an entity
+      tags:
+      - Core
+  /v1/core/entities/resolve:
+    post:
+      consumes:
+      - application/json
+      description: L1 Identity Resolution. Accepts one or more identifier key-value
+        pairs and returns (or creates) the canonical entity. Handles entity merges
+        when multiple entities match different identifiers in the same request.
+      parameters:
+      - description: Resolution request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.ResolveEntityRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.ResolveEntityResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - ApiKeyAuth: []
+      summary: Resolve identifiers to a canonical entity
+      tags:
+      - Core
+  /v1/core/interactions:
+    get:
+      consumes:
+      - application/json
+      description: Returns a filtered, paginated list of interactions from the L2
+        Behavioral Graph for a given entity. Used for debugging, demo, and audit purposes.
+      parameters:
+      - description: Entity UUID to filter by
+        in: query
+        name: entity_id
+        required: true
+        type: string
+      - description: Filter by intent (e.g. book_demo)
+        in: query
+        name: intent
+        type: string
+      - description: Filter by action (e.g. send_cold_email)
+        in: query
+        name: action
+        type: string
+      - description: Filter by outcome (success|failed|pending|ignored|unknown)
+        in: query
+        name: outcome
+        type: string
+      - description: Filter by API (e.g. linkedin)
+        in: query
+        name: api
+        type: string
+      - description: Max results to return (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      - description: Pagination offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.ListInteractionsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - ApiKeyAuth: []
+      summary: List interactions for an entity
+      tags:
+      - Core
+  /v1/core/interactions/batch:
+    post:
+      consumes:
+      - application/json
+      description: Atomically logs up to 100 interaction events. All items are validated
+        before any insert. Duplicate external_refs are skipped (idempotent), not rejected.
+        Returns 201 Created.
+      parameters:
+      - description: Batch interaction payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.BatchInteractionLogRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.BatchInteractionLogResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - ApiKeyAuth: []
+      summary: Log multiple interactions
+      tags:
+      - Core
+  /v1/core/interactions/log:
+    post:
+      consumes:
+      - application/json
+      description: Appends a behavioral event to the L2 Behavioral Graph. Supports
+        idempotent logging via external_ref. Entity must exist and belong to the calling
+        tenant.
+      parameters:
+      - description: Interaction payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.InteractionLogRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.InteractionLogResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - ApiKeyAuth: []
+      summary: Log a single interaction
+      tags:
+      - Core
+  /v1/core/recommends/{id}/feedback:
+    patch:
+      consumes:
+      - application/json
+      description: Closes the feedback loop. Reports whether the agent followed the
+        recommendation
+      parameters:
+      - description: Recommendation UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Feedback payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/fusemomo-api_internal_models_payload.FeedbackRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_models_payload.FeedbackResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "402":
+          description: Payment Required
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/fusemomo-api_internal_utils.APIError'
+      security:
+      - ApiKeyAuth: []
+      summary: Record recommendation outcome (feedback loop)
+      tags:
+      - Core
+  /v1/webhooks/stripe:
+    post:
+      consumes:
+      - application/json
+      description: Receives and processes signed Stripe webhook events.
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "500":
+          description: Internal Server Error
+      summary: Stripe webhook receiver
+      tags:
+      - Billing
+securityDefinitions:
+  ApiKeyAuth:
+    description: 'Bearer token: `Authorization: Bearer fm_live_xxxx`'
+    in: header
+    name: Authorization
+    type: apiKey
+  SessionAuth:
+    description: HttpOnly session cookie set by POST /auth/session
+    in: cookie
+    name: fusemomo_session
+    type: apiKey
 swagger: "2.0"

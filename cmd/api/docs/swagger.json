@@ -1,9 +1,182 @@
 {
     "swagger": "2.0",
     "info": {
-        "contact": {}
+        "description": "Behavioral Intelligence for AI Agents that act through APIs.",
+        "title": "Fusemomo API",
+        "contact": {
+            "name": "Fusemomo Support",
+            "url": "https://fusemomo.com",
+            "email": "team@fusemomo.com"
+        },
+        "license": {
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+        },
+        "version": "1.0"
     },
+    "host": "https://api.fusemomo.com",
+    "basePath": "/",
     "paths": {
+        "/auth/login/{provider}": {
+            "get": {
+                "description": "Redirects to Supabase OAuth for Google or GitHub",
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Social Login",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "OAuth Provider (google or github)",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Redirect URL after login",
+                        "name": "redirect_to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "307": {
+                        "description": "Redirects to Supabase"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/session": {
+            "post": {
+                "description": "Validates a Supabase access_token (ES256 JWT), looks up the tenant record, creates",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Create a server-side session",
+                "parameters": [
+                    {
+                        "description": "Supabase access token obtained from the Supabase client SDK",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "access_token": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "user": {
+                                    "type": "object",
+                                    "properties": {
+                                        "auth_user_id": {
+                                            "type": "string"
+                                        },
+                                        "plan": {
+                                            "type": "string"
+                                        },
+                                        "role": {
+                                            "type": "string"
+                                        },
+                                        "tenant_id": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Deletes the server-side session record and clears the HttpOnly session cookie.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Destroy the current session (logout)",
+                "responses": {
+                    "204": {
+                        "description": "Session destroyed. Cookie cleared."
+                    }
+                }
+            }
+        },
+        "/health/db": {
+            "get": {
+                "description": "Check if the database connection is alive.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Check database health",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
         "/ping": {
             "get": {
                 "description": "Returns a simple pong message to verify the server is running.",
@@ -26,6 +199,3159 @@
                     }
                 }
             }
+        },
+        "/v1/admin/tenants": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Returns all tenant records with current month usage stats and pagination support",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "List all tenants (admin view)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by plan tier (free, builder, enterprise)",
+                        "name": "plan",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Pagination limit",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.AdminTenantsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/tenants/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Hard delete a tenant and all its associated data (admin only)",
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Delete a tenant",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Tenant ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/tenants/{id}/plan": {
+            "patch": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Updates a tenant's plan tier and limits directly in the database (admin override)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Manually change a tenant's plan",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Tenant ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Plan Update Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.UpdateTenantPlanRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/admin/usage/global": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Aggregates usage metrics across all tenants for platform monitoring",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Global usage stats",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.GlobalUsageResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app": {
+            "delete": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Marks the currently authenticated tenant profile as deleted. This is irreversible via the UI.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dashboard"
+                ],
+                "summary": "Delete tenant profile (Soft Delete)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/analytics/activity-heatmap": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Daily interaction counts for calendar heatmap (max 90d)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Analytics"
+                ],
+                "summary": "Activity heatmap",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "7d | 30d | 90d (no 'all')",
+                        "name": "period",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fiber.Map"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/analytics/api-distribution": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Percentage distribution of API usage for pie/donut chart",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Analytics"
+                ],
+                "summary": "API call distribution",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "7d | 30d | 90d | all",
+                        "name": "period",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fiber.Map"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/analytics/performance-by-action-type": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Success rates broken down by action_type for bar chart",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Analytics"
+                ],
+                "summary": "Performance by action type",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "7d | 30d | 90d | all",
+                        "name": "period",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "success_rate | count | name (default: success_rate)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1-50 (default: 10)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fiber.Map"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/analytics/recommendation-impact": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Compares outcomes with vs. without recommendations (Builder+ only)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Analytics"
+                ],
+                "summary": "Recommendation ROI impact",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "7d | 30d | 90d | all",
+                        "name": "period",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fiber.Map"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/analytics/success-rate-timeseries": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Time-series data of success rates for line chart visualization",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Analytics"
+                ],
+                "summary": "Success rate time series",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "7d | 30d | 90d | all",
+                        "name": "period",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "day | week | month (auto-selected if omitted)",
+                        "name": "granularity",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include recommendation lift data (Builder+ only)",
+                        "name": "include_recommendations",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fiber.Map"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "402": {
+                        "description": "Payment Required",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/analytics/summary": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "High-level summary statistics for the analytics dashboard",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Analytics"
+                ],
+                "summary": "Analytics summary",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Time range: 7d | 30d | 90d | all",
+                        "name": "period",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include previous-period comparison (default true)",
+                        "name": "compare_to_previous",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fiber.Map"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/analytics/top-entities": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Entities ranked by success rate or interaction count",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Analytics"
+                ],
+                "summary": "Top performing entities",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "7d | 30d | 90d | all",
+                        "name": "period",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "success_rate | interaction_count (default: success_rate)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Minimum interactions to qualify (default: 10)",
+                        "name": "min_interactions",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "1-50 (default: 10)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fiber.Map"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/billing/checkout": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Creates a Stripe-hosted Checkout Session for the authenticated tenant.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Billing"
+                ],
+                "summary": "Create a Stripe Checkout Session",
+                "parameters": [
+                    {
+                        "description": "Price ID to subscribe to",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models.CheckoutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models.CheckoutResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/billing/portal": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Creates a Stripe Customer Portal Session for the authenticated tenant.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Billing"
+                ],
+                "summary": "Open the Stripe Customer Portal",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models.PortalResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/billing/status": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Returns the tenant's current plan name, active subscription flag, and quota limits.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Billing"
+                ],
+                "summary": "Get billing status",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models.BillingStatusResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/graph": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Returns entities, identifiers, interactions, and entity links for graph visualization",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Graph"
+                ],
+                "summary": "Behavioral Entity Graph data",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by entity type",
+                        "name": "entity_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Minimum behavioral score (0.0–1.0)",
+                        "name": "min_score",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max entities to return (default 200, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.GraphDataResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/key": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Fetch all active API keys for the authenticated tenant",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API_key"
+                ],
+                "summary": "List All API keys which have status active",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/fusemomo-api_internal_models_payload.APIKeyInfo"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/key/all": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Fetch all API keys (active, expired, revoked) for the authenticated tenant",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API_key"
+                ],
+                "summary": "List all API keys",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/fusemomo-api_internal_models_payload.APIKeyInfo"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/key/create": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Create API keys for AI agent to access Fusemomo",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API_key"
+                ],
+                "summary": "Create API keys",
+                "parameters": [
+                    {
+                        "description": "API Key Request",
+                        "name": "req",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.CreateAPIKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.CreateAPIKeyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/key/sync-expired": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Update the status of all expired API keys for the authenticated tenant",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API_key"
+                ],
+                "summary": "Sync expired API keys",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/key/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Delete an existing API key for an AI agent",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API_key"
+                ],
+                "summary": "Delete API keys",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "API Key ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/key/{id}/revoke": {
+            "post": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Update the status of an API key to 'revoked'",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API_key"
+                ],
+                "summary": "Revoke an API key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "API Key ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/profile": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Fetch the currently authenticated tenant profile details",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dashboard"
+                ],
+                "summary": "Get tenant profile",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.ProfileResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Partially update tenant profile fields (name, avatar_url)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dashboard"
+                ],
+                "summary": "Update tenant profile",
+                "parameters": [
+                    {
+                        "description": "Update Profile Request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.UpdateProfileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.ProfileResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/usage": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Fetch current month's usage logs and tenant limits",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dashboard"
+                ],
+                "summary": "Get current month's usage stats",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.UsageResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/app/usage/history": {
+            "get": {
+                "security": [
+                    {
+                        "SessionAuth": []
+                    }
+                ],
+                "description": "Fetch time-series usage data for analytics dashboard (builder \u0026 enterprise only)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dashboard"
+                ],
+                "summary": "Get historical usage data (last 12 months)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.UsageHistoryResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/core/entities": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Returns a paginated list of entities matching the filters",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Core"
+                ],
+                "summary": "List all entities",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Results per page (max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by entity type",
+                        "name": "entity_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by API source",
+                        "name": "source",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Filter by behavioral score",
+                        "name": "min_score",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sort field (default: last_interaction_at)",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order (asc/desc)",
+                        "name": "order",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.EntitiesListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/core/entities/resolve": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "L1 Identity Resolution. Accepts one or more identifier key-value pairs and returns (or creates) the canonical entity. Handles entity merges when multiple entities match different identifiers in the same request.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Core"
+                ],
+                "summary": "Resolve identifiers to a canonical entity",
+                "parameters": [
+                    {
+                        "description": "Resolution request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.ResolveEntityRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.ResolveEntityResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/core/entities/{entity_id}/recommend": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Scores all (api, action_type) pairs for an entity + intent using behavioral history.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Core"
+                ],
+                "summary": "Get L3 ranked recommendations for an entity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Entity UUID",
+                        "name": "entity_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Recommendation parameters",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.RecommendRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models.RecommendResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "402": {
+                        "description": "Payment Required",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/core/entities/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Returns the canonical entity details along with its graph identifiers and recent behavior log",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Core"
+                ],
+                "summary": "Get a specific entity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Entity ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.EntityDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Irreversibly redacts an entity's PII, identifiers, and metadata, leaving only anonymized behavioral records for analytics.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Core"
+                ],
+                "summary": "Anonymize an entity (GDPR erasure)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Entity ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.EntityDeleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/core/entities/{id}/link": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Adds one or more new identifiers to an existing entity. Returns 409 if any identifier already belongs to a different entity, so the caller can decide whether to merge or reject.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Core"
+                ],
+                "summary": "Manually link identifiers to an entity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Entity UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Link request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.LinkIdentifiersRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.LinkIdentifiersResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/core/interactions": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Returns a filtered, paginated list of interactions from the L2 Behavioral Graph for a given entity. Used for debugging, demo, and audit purposes.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Core"
+                ],
+                "summary": "List interactions for an entity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Entity UUID to filter by",
+                        "name": "entity_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by intent (e.g. book_demo)",
+                        "name": "intent",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by action (e.g. send_cold_email)",
+                        "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by outcome (success|failed|pending|ignored|unknown)",
+                        "name": "outcome",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by API (e.g. linkedin)",
+                        "name": "api",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results to return (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Pagination offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.ListInteractionsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/core/interactions/batch": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Atomically logs up to 100 interaction events. All items are validated before any insert. Duplicate external_refs are skipped (idempotent), not rejected. Returns 201 Created.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Core"
+                ],
+                "summary": "Log multiple interactions",
+                "parameters": [
+                    {
+                        "description": "Batch interaction payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.BatchInteractionLogRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.BatchInteractionLogResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/core/interactions/log": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Appends a behavioral event to the L2 Behavioral Graph. Supports idempotent logging via external_ref. Entity must exist and belong to the calling tenant.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Core"
+                ],
+                "summary": "Log a single interaction",
+                "parameters": [
+                    {
+                        "description": "Interaction payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.InteractionLogRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.InteractionLogResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/core/recommends/{id}/feedback": {
+            "patch": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Closes the feedback loop. Reports whether the agent followed the recommendation",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Core"
+                ],
+                "summary": "Record recommendation outcome (feedback loop)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Recommendation UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Feedback payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.FeedbackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_models_payload.FeedbackResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "402": {
+                        "description": "Payment Required",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/fusemomo-api_internal_utils.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/webhooks/stripe": {
+            "post": {
+                "description": "Receives and processes signed Stripe webhook events.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "Billing"
+                ],
+                "summary": "Stripe webhook receiver",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "fiber.Map": {
+            "type": "object",
+            "additionalProperties": {}
+        },
+        "fusemomo-api_internal_models.BillingStatusResponse": {
+            "type": "object",
+            "properties": {
+                "connected_api_limit": {
+                    "type": "integer"
+                },
+                "has_active_subscription": {
+                    "type": "boolean"
+                },
+                "monthly_interaction_limit": {
+                    "type": "integer"
+                },
+                "monthly_resolution_limit": {
+                    "type": "integer"
+                },
+                "plan": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models.CheckoutRequest": {
+            "type": "object",
+            "required": [
+                "price_id"
+            ],
+            "properties": {
+                "price_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models.CheckoutResponse": {
+            "type": "object",
+            "properties": {
+                "checkout_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models.OpportunityEntry": {
+            "type": "object",
+            "properties": {
+                "action_type": {
+                    "type": "string"
+                },
+                "api": {
+                    "type": "string"
+                },
+                "composite_score": {
+                    "type": "number"
+                },
+                "feedback_weight": {
+                    "type": "number"
+                },
+                "is_primary": {
+                    "type": "boolean"
+                },
+                "last_occurred_at": {
+                    "type": "string"
+                },
+                "last_success_at": {
+                    "type": "string"
+                },
+                "raw_success_rate": {
+                    "type": "number"
+                },
+                "recency_score": {
+                    "type": "number"
+                },
+                "success_count": {
+                    "type": "integer"
+                },
+                "total_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models.PortalResponse": {
+            "type": "object",
+            "properties": {
+                "portal_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models.RecommendResponse": {
+            "type": "object",
+            "properties": {
+                "confidence_score": {
+                    "description": "primary.CompositeScore, or 0",
+                    "type": "number"
+                },
+                "data_sufficient": {
+                    "description": "false if below MinInteractionsForConfidence",
+                    "type": "boolean"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "generated_at": {
+                    "type": "string"
+                },
+                "intent": {
+                    "type": "string"
+                },
+                "lookback_days": {
+                    "type": "integer"
+                },
+                "opportunity_set": {
+                    "description": "all qualifying pairs, ranked",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models.OpportunityEntry"
+                    }
+                },
+                "primary": {
+                    "description": "nil if no qualifying data",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/fusemomo-api_internal_models.OpportunityEntry"
+                        }
+                    ]
+                },
+                "recommendation_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.APIKeyInfo": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "key_prefix": {
+                    "type": "string"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.AdminTenantInfo": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "plan": {
+                    "type": "string"
+                },
+                "usage": {
+                    "$ref": "#/definitions/fusemomo-api_internal_models_payload.AdminTenantUsage"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.AdminTenantUsage": {
+            "type": "object",
+            "properties": {
+                "interactions": {
+                    "type": "integer"
+                },
+                "resolutions": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.AdminTenantsResponse": {
+            "type": "object",
+            "properties": {
+                "tenants": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.AdminTenantInfo"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.BatchInteractionLogRequest": {
+            "type": "object",
+            "required": [
+                "interactions"
+            ],
+            "properties": {
+                "interactions": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.InteractionLogRequest"
+                    }
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.BatchInteractionLogResponse": {
+            "type": "object",
+            "properties": {
+                "first_id": {
+                    "type": "string"
+                },
+                "last_id": {
+                    "type": "string"
+                },
+                "logged_at": {
+                    "type": "string"
+                },
+                "logged_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.CreateAPIKeyRequest": {
+            "type": "object",
+            "required": [
+                "expires_in",
+                "name"
+            ],
+            "properties": {
+                "expires_in": {
+                    "type": "string",
+                    "enum": [
+                        "30",
+                        "90",
+                        "forever"
+                    ]
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 3
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.CreateAPIKeyResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "key": {
+                    "description": "Keep secret, full key",
+                    "type": "string"
+                },
+                "key_prefix": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.EntitiesListResponse": {
+            "type": "object",
+            "properties": {
+                "entities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.EntityResponse"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.EntityDeleteResponse": {
+            "type": "object",
+            "properties": {
+                "anonymized": {
+                    "type": "boolean"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "erased_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.EntityDetailResponse": {
+            "type": "object",
+            "properties": {
+                "behavioral_score": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "identifier_count": {
+                    "type": "integer"
+                },
+                "identifier_sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "identifiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.EntityIdentifier"
+                    }
+                },
+                "last_interaction_at": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "preferred_action_type": {
+                    "type": "string"
+                },
+                "recent_interactions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.InteractionSummary"
+                    }
+                },
+                "successful_interactions": {
+                    "type": "integer"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "total_interactions": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.EntityIdentifier": {
+            "type": "object",
+            "properties": {
+                "confidence": {
+                    "type": "number"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "identifier_type": {
+                    "type": "string"
+                },
+                "identifier_value": {
+                    "type": "string"
+                },
+                "link_strategy": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "verified_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.EntityResponse": {
+            "type": "object",
+            "properties": {
+                "behavioral_score": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "identifier_count": {
+                    "type": "integer"
+                },
+                "identifier_sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "last_interaction_at": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "preferred_action_type": {
+                    "type": "string"
+                },
+                "successful_interactions": {
+                    "type": "integer"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "total_interactions": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.FeedbackRequest": {
+            "type": "object",
+            "properties": {
+                "outcome_interaction_id": {
+                    "description": "optional UUID",
+                    "type": "string"
+                },
+                "was_followed": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.FeedbackResponse": {
+            "type": "object",
+            "properties": {
+                "outcome": {
+                    "type": "string"
+                },
+                "recommendation_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "was_followed": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.GlobalUsageResponse": {
+            "type": "object",
+            "properties": {
+                "by_plan": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "total_entities": {
+                    "type": "integer"
+                },
+                "total_interactions": {
+                    "type": "integer"
+                },
+                "total_resolutions_this_month": {
+                    "type": "integer"
+                },
+                "total_tenants": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.GraphDataResponse": {
+            "type": "object",
+            "properties": {
+                "entities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.GraphEntity"
+                    }
+                },
+                "entity_links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.GraphEntityLink"
+                    }
+                },
+                "identifiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.GraphIdentifier"
+                    }
+                },
+                "interactions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.GraphInteractionEdge"
+                    }
+                },
+                "total_entities": {
+                    "type": "integer"
+                },
+                "truncated": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.GraphEntity": {
+            "type": "object",
+            "properties": {
+                "behavioral_score": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "preferred_action_type": {
+                    "type": "string"
+                },
+                "successful_interactions": {
+                    "type": "integer"
+                },
+                "total_interactions": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.GraphEntityLink": {
+            "type": "object",
+            "properties": {
+                "canonical_entity_id": {
+                    "type": "string"
+                },
+                "confidence": {
+                    "type": "number"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "link_strategy": {
+                    "type": "string"
+                },
+                "merged_entity_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.GraphIdentifier": {
+            "type": "object",
+            "properties": {
+                "confidence": {
+                    "type": "number"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "identifier_type": {
+                    "type": "string"
+                },
+                "identifier_value": {
+                    "type": "string"
+                },
+                "link_strategy": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.GraphInteractionEdge": {
+            "type": "object",
+            "properties": {
+                "api": {
+                    "type": "string"
+                },
+                "dominant_outcome": {
+                    "type": "string"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "last_occurred_at": {
+                    "type": "string"
+                },
+                "success_count": {
+                    "type": "integer"
+                },
+                "total_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.InteractionItem": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "action_type": {
+                    "type": "string"
+                },
+                "agent_id": {
+                    "type": "string"
+                },
+                "api": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "external_ref": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "intent": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "occurred_at": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.InteractionLogRequest": {
+            "type": "object",
+            "required": [
+                "action",
+                "action_type",
+                "api",
+                "entity_id",
+                "outcome"
+            ],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "action_type": {
+                    "type": "string",
+                    "maxLength": 100
+                },
+                "agent_id": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "api": {
+                    "type": "string",
+                    "maxLength": 100
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "external_ref": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "intent": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "occurred_at": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string",
+                    "enum": [
+                        "success",
+                        "failed",
+                        "pending",
+                        "ignored",
+                        "unknown"
+                    ]
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.InteractionLogResponse": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string"
+                },
+                "interaction_id": {
+                    "type": "string"
+                },
+                "logged_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.InteractionSummary": {
+            "type": "object",
+            "properties": {
+                "action_type": {
+                    "type": "string"
+                },
+                "api": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "occurred_at": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.LinkIdentifiersRequest": {
+            "type": "object",
+            "required": [
+                "identifiers"
+            ],
+            "properties": {
+                "confidence": {
+                    "description": "0.0–1.0",
+                    "type": "number"
+                },
+                "identifiers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "link_strategy": {
+                    "description": "\"deterministic\" | \"probabilistic\"",
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.LinkIdentifiersResponse": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string"
+                },
+                "identifiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.EntityIdentifier"
+                    }
+                },
+                "linked_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.ListInteractionsResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.InteractionItem"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.ProfileResponse": {
+            "type": "object",
+            "properties": {
+                "avatar_url": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "plan": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.RecommendRequest": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "intent": {
+                    "type": "string"
+                },
+                "lookback_days": {
+                    "description": "0 = service default (90)",
+                    "type": "integer"
+                },
+                "min_success_count": {
+                    "description": "0 = service default (1)",
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.ResolveEntityRequest": {
+            "type": "object",
+            "required": [
+                "identifiers"
+            ],
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "identifiers": {
+                    "description": "Identifiers maps source name → identifier value.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.ResolveEntityResponse": {
+            "type": "object",
+            "properties": {
+                "behavioral_score": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "identifiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.EntityIdentifier"
+                    }
+                },
+                "last_interaction_at": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "preferred_action_type": {
+                    "type": "string"
+                },
+                "successful_interactions": {
+                    "type": "integer"
+                },
+                "total_interactions": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.UpdateProfileRequest": {
+            "type": "object",
+            "properties": {
+                "avatar_url": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.UpdateTenantPlanRequest": {
+            "type": "object",
+            "required": [
+                "monthly_resolution_limit",
+                "plan"
+            ],
+            "properties": {
+                "monthly_resolution_limit": {
+                    "type": "integer"
+                },
+                "plan": {
+                    "type": "string",
+                    "enum": [
+                        "free",
+                        "builder",
+                        "enterprise"
+                    ]
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.UsageHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "months": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/fusemomo-api_internal_models_payload.UsageMonth"
+                    }
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.UsageMonth": {
+            "type": "object",
+            "properties": {
+                "interactions": {
+                    "type": "integer"
+                },
+                "period": {
+                    "type": "string"
+                },
+                "resolutions": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_models_payload.UsageResponse": {
+            "type": "object",
+            "properties": {
+                "interaction_count": {
+                    "type": "integer"
+                },
+                "interaction_limit": {
+                    "type": "integer"
+                },
+                "percentage_used": {
+                    "type": "number"
+                },
+                "period": {
+                    "type": "string"
+                },
+                "plan": {
+                    "type": "string"
+                },
+                "recommendation_count": {
+                    "type": "integer"
+                },
+                "resolution_count": {
+                    "type": "integer"
+                },
+                "resolution_limit": {
+                    "type": "integer"
+                }
+            }
+        },
+        "fusemomo-api_internal_utils.APIError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "details": {},
+                "message": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "ApiKeyAuth": {
+            "description": "Bearer token: `Authorization: Bearer fm_live_xxxx`",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        },
+        "SessionAuth": {
+            "description": "HttpOnly session cookie set by POST /auth/session",
+            "type": "apiKey",
+            "name": "fusemomo_session",
+            "in": "cookie"
         }
     }
 }

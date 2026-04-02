@@ -30,7 +30,8 @@ func (h *Handler) tenantPlan(ctx fiber.Ctx, tenantID interface{}) (string, error
 // @Failure 400 {object} utils.APIError
 // @Failure 401 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /app/analytics/summary [get]
+// @Security     SessionAuth
+// @Router /v1/app/analytics/summary [get]
 func (h *Handler) GetAnalyticsSummaryHandler(c fiber.Ctx) error {
 	start := time.Now()
 
@@ -244,7 +245,8 @@ func (h *Handler) GetAnalyticsSummaryHandler(c fiber.Ctx) error {
 // @Failure 401 {object} utils.APIError
 // @Failure 402 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /app/analytics/success-rate-timeseries [get]
+// @Security     SessionAuth
+// @Router /v1/app/analytics/success-rate-timeseries [get]
 func (h *Handler) GetSuccessRateTimeSeriesHandler(c fiber.Ctx) error {
 	tenantID, err := tenantIDFromCtx(c)
 	if err != nil {
@@ -432,7 +434,8 @@ func (h *Handler) GetSuccessRateTimeSeriesHandler(c fiber.Ctx) error {
 // @Failure 400 {object} utils.APIError
 // @Failure 401 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /app/analytics/performance-by-action-type [get]
+// @Security     SessionAuth
+// @Router /v1/app/analytics/performance-by-action-type [get]
 func (h *Handler) GetPerformanceByActionTypeHandler(c fiber.Ctx) error {
 	tenantID, err := tenantIDFromCtx(c)
 	if err != nil {
@@ -544,7 +547,8 @@ func (h *Handler) GetPerformanceByActionTypeHandler(c fiber.Ctx) error {
 // @Failure 400 {object} utils.APIError
 // @Failure 401 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /app/analytics/activity-heatmap [get]
+// @Security     SessionAuth
+// @Router /v1/app/analytics/activity-heatmap [get]
 func (h *Handler) GetActivityHeatmapHandler(c fiber.Ctx) error {
 	tenantID, err := tenantIDFromCtx(c)
 	if err != nil {
@@ -639,7 +643,8 @@ func (h *Handler) GetActivityHeatmapHandler(c fiber.Ctx) error {
 // @Failure 400 {object} utils.APIError
 // @Failure 401 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /app/analytics/api-distribution [get]
+// @Security     SessionAuth
+// @Router /v1/app/analytics/api-distribution [get]
 func (h *Handler) GetApiDistributionHandler(c fiber.Ctx) error {
 	tenantID, err := tenantIDFromCtx(c)
 	if err != nil {
@@ -728,7 +733,8 @@ func (h *Handler) GetApiDistributionHandler(c fiber.Ctx) error {
 // @Failure 400 {object} utils.APIError
 // @Failure 401 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /app/analytics/top-entities [get]
+// @Security     SessionAuth
+// @Router /v1/app/analytics/top-entities [get]
 func (h *Handler) GetTopEntitiesHandler(c fiber.Ctx) error {
 	tenantID, err := tenantIDFromCtx(c)
 	if err != nil {
@@ -852,7 +858,8 @@ func (h *Handler) GetTopEntitiesHandler(c fiber.Ctx) error {
 // @Failure 400 {object} utils.APIError
 // @Failure 401 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /app/analytics/recommendation-impact [get]
+// @Security     SessionAuth
+// @Router /v1/app/analytics/recommendation-impact [get]
 func (h *Handler) GetRecommendationImpactHandler(c fiber.Ctx) error {
 	tenantID, err := tenantIDFromCtx(c)
 	if err != nil {
@@ -1012,7 +1019,8 @@ func (h *Handler) GetRecommendationImpactHandler(c fiber.Ctx) error {
 // @Failure 400 {object} utils.APIError
 // @Failure 401 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /app/graph [get]
+// @Security     SessionAuth
+// @Router /v1/app/graph [get]
 func (h *Handler) GetEntityGraphHandler(c fiber.Ctx) error {
 	start := time.Now()
 

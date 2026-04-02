@@ -39,7 +39,7 @@ func NewHandler(db *pgxpool.Pool) *Handler {
 // @Accept       json
 // @Produce      json
 // @Param        entity_id path  string            true  "Entity UUID"
-// @Param        request   body  recommendRequest  false "Recommendation parameters"
+// @Param        request   body  payload.RecommendRequest  false "Recommendation parameters"
 // @Success      200 {object} models.RecommendResponse
 // @Failure      400 {object} utils.APIError
 // @Failure      401 {object} utils.APIError
@@ -142,8 +142,8 @@ func (h *Handler) RecommendHandler(c fiber.Ctx) error {
 // @Accept       json
 // @Produce      json
 // @Param        id      path  string          true  "Recommendation UUID"
-// @Param        request body  feedbackRequest true  "Feedback payload"
-// @Success      200 {object} feedbackResponse
+// @Param        request body  payload.FeedbackRequest true  "Feedback payload"
+// @Success      200 {object} payload.FeedbackResponse
 // @Failure      400 {object} utils.APIError
 // @Failure      401 {object} utils.APIError
 // @Failure      402 {object} utils.APIError

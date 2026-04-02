@@ -711,7 +711,7 @@ func (h *Handler) LinkEntityManuallyHandler(c fiber.Ctx) error {
 // @Success 200 {object} payload.EntitiesListResponse
 // @Failure 401 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /v1/entities [get]
+// @Router /v1/core/entities [get]
 func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {
@@ -913,7 +913,7 @@ func (h *Handler) GetAllEntitiesHandler(c fiber.Ctx) error {
 // @Failure 401 {object} utils.APIError
 // @Failure 404 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /v1/entities/{id} [get]
+// @Router /v1/core/entities/{id} [get]
 func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {
@@ -1092,7 +1092,7 @@ func (h *Handler) GetEntityHandler(c fiber.Ctx) error {
 // @Failure 401 {object} utils.APIError
 // @Failure 404 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /v1/entities/{id} [delete]
+// @Router /v1/core/entities/{id} [delete]
 func (h *Handler) DeleteEntityHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {

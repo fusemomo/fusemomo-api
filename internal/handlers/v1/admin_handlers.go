@@ -24,7 +24,8 @@ import (
 // @Failure 401 {object} utils.APIError
 // @Failure 403 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /admin/tenants [get]
+// @Security     SessionAuth
+// @Router /v1/admin/tenants [get]
 func (h *Handler) GetAdminTenantsHandler(c fiber.Ctx) error {
 	// Query parameters
 	planFilter := c.Query("plan")
@@ -176,7 +177,8 @@ func (h *Handler) GetAdminTenantsHandler(c fiber.Ctx) error {
 // @Failure 401 {object} utils.APIError
 // @Failure 404 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /admin/tenants/{id}/plan [patch]
+// @Security     SessionAuth
+// @Router /v1/admin/tenants/{id}/plan [patch]
 func (h *Handler) UpdateAdminTenantPlanHandler(c fiber.Ctx) error {
 	tenantIDParam := c.Params("id")
 	if tenantIDParam == "" {
@@ -227,7 +229,8 @@ func (h *Handler) UpdateAdminTenantPlanHandler(c fiber.Ctx) error {
 // @Failure 401 {object} utils.APIError
 // @Failure 403 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /admin/usage/global [get]
+// @Security     SessionAuth
+// @Router /v1/admin/usage/global [get]
 func (h *Handler) GetGlobalTenantUsagesHandler(c fiber.Ctx) error {
 	var resp payload.GlobalUsageResponse
 	resp.ByPlan = make(map[string]int)
@@ -295,7 +298,8 @@ func (h *Handler) GetGlobalTenantUsagesHandler(c fiber.Ctx) error {
 // @Failure 403 {object} utils.APIError
 // @Failure 404 {object} utils.APIError
 // @Failure 500 {object} utils.APIError
-// @Router /admin/tenants/{id} [delete]
+// @Security     SessionAuth
+// @Router /v1/admin/tenants/{id} [delete]
 func (h *Handler) DeleteTenantHandler(c fiber.Ctx) error {
 	tenantID := c.Params("id")
 	if tenantID == "" {

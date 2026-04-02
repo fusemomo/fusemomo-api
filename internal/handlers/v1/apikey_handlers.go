@@ -22,7 +22,8 @@ import (
 // @Failure      400  {object}  utils.APIError
 // @Failure      401  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /app/key/create [post]
+// @Security     SessionAuth
+// @Router       /v1/app/key/create [post]
 func (h *Handler) CreateAPIkeysForAgentsHandler(c fiber.Ctx) error {
 	var req payload.CreateAPIKeyRequest
 	if err := c.Bind().JSON(&req); err != nil {
@@ -110,7 +111,8 @@ func (h *Handler) CreateAPIkeysForAgentsHandler(c fiber.Ctx) error {
 // @Success      200  {array}   payload.APIKeyInfo
 // @Failure      401  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /app/key [get]
+// @Security     SessionAuth
+// @Router       /v1/app/key [get]
 func (h *Handler) GetAPIKeysHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {
@@ -160,7 +162,8 @@ func (h *Handler) GetAPIKeysHandler(c fiber.Ctx) error {
 // @Success      200  {array}   payload.APIKeyInfo
 // @Failure      401  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /app/key/all [get]
+// @Security     SessionAuth
+// @Router       /v1/app/key/all [get]
 func (h *Handler) ListAllAPIKeysHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {
@@ -212,7 +215,8 @@ func (h *Handler) ListAllAPIKeysHandler(c fiber.Ctx) error {
 // @Failure      400  {object}  utils.APIError
 // @Failure      401  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /app/key/{id} [delete]
+// @Security     SessionAuth
+// @Router       /v1/app/key/{id} [delete]
 func (h *Handler) DeleteAPIkeysForAgentsHandler(c fiber.Ctx) error {
 	keyID := c.Params("id")
 	if keyID == "" {
@@ -258,7 +262,8 @@ func (h *Handler) DeleteAPIkeysForAgentsHandler(c fiber.Ctx) error {
 // @Failure      401  {object}  utils.APIError
 // @Failure      404  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /app/key/{id}/revoke [post]
+// @Security     SessionAuth
+// @Router       /v1/app/key/{id}/revoke [post]
 func (h *Handler) RevokeAPIKeyHandler(c fiber.Ctx) error {
 	keyID := c.Params("id")
 	if keyID == "" {
@@ -309,7 +314,8 @@ func (h *Handler) RevokeAPIKeyHandler(c fiber.Ctx) error {
 // @Success      200  {object}  map[string]interface{}
 // @Failure      401  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /app/key/sync-expired [post]
+// @Security     SessionAuth
+// @Router       /v1/app/key/sync-expired [post]
 func (h *Handler) SyncExpiredAPIKeysHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {

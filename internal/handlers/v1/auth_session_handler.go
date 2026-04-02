@@ -51,6 +51,20 @@ func parseJWK(jwkJSON string) (*ecdsa.PublicKey, error) {
 	}, nil
 }
 
+// CreateSessionHandler godoc
+// @Summary      Create a server-side session
+// @Description  Validates a Supabase access_token (ES256 JWT), looks up the tenant record, creates
+//               a server-side session, and sets an HttpOnly Secure cookie (fusemomo_session).
+//               The cookie must be present on all subsequent /app/* and /dashboard/* requests.
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        request body object{access_token=string} true "Supabase access token obtained from the Supabase client SDK"
+// @Success      200 {object} object{user=object{tenant_id=string,auth_user_id=string,role=string,plan=string}}
+// @Failure      400 {object} utils.APIError
+// @Failure      401 {object} utils.APIError
+// @Failure      500 {object} utils.APIError
+// @Router       /auth/session [post]
 func (h *Handler) CreateSessionHandler(c fiber.Ctx) error {
 	var body struct {
 		AccessToken string `json:"access_token"`
@@ -142,8 +156,15 @@ func (h *Handler) CreateSessionHandler(c fiber.Ctx) error {
 	})
 }
 
-// DeleteSessionHandler logs out the user by clearing the session cookie and
-// removing the server-side session entry.
+// DeleteSessionHandler godoc
+// @Summary      Destroy the current session (logout)
+// @Description  Deletes the server-side session record and clears the HttpOnly session cookie.
+//               Returns 204 No Content. Safe to call even if no session exists.
+// @Tags         Auth
+// @Security     SessionAuth
+// @Produce      json
+// @Success      204 "Session destroyed. Cookie cleared."
+// @Router       /auth/session [delete]
 func (h *Handler) DeleteSessionHandler(c fiber.Ctx) error {
 	sessionID := c.Cookies(session.CookieName)
 	if sessionID != "" {

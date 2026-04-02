@@ -18,7 +18,8 @@ import (
 // @Success      200  {object}  payload.ProfileResponse
 // @Failure      401  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /dashboard/profile [get]
+// @Security     SessionAuth
+// @Router       /v1/app/profile [get]
 func (h *Handler) GetProfileHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {
@@ -38,10 +39,11 @@ func (h *Handler) GetProfileHandler(c fiber.Ctx) error {
 // @Description Marks the currently authenticated tenant profile as deleted. This is irreversible via the UI.
 // @Tags Dashboard
 // @Produce json
-// @Success      200  {object}  utils.APIResponse
+// @Success      200  {object}  map[string]interface{}
 // @Failure      401  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /dashboard [delete]
+// @Security     SessionAuth
+// @Router       /v1/app [delete]
 func (h *Handler) DeleteTenantProfileHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {
@@ -85,7 +87,8 @@ func (h *Handler) DeleteTenantProfileHandler(c fiber.Ctx) error {
 // @Failure      400  {object}  utils.APIError
 // @Failure      401  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /dashboard/profile [patch]
+// @Security     SessionAuth
+// @Router       /v1/app/profile [patch]
 func (h *Handler) UpdateTenantProfileHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {
@@ -172,7 +175,8 @@ func (h *Handler) getCurrentProfile(c fiber.Ctx, tenantID uuid.UUID) error {
 // @Success      200  {object}  payload.UsageResponse
 // @Failure      401  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /dashboard/usage [get]
+// @Security     SessionAuth
+// @Router       /v1/app/usage [get]
 func (h *Handler) GetMonthlyUsageHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {
@@ -260,7 +264,8 @@ func (h *Handler) GetMonthlyUsageHandler(c fiber.Ctx) error {
 // @Failure      401  {object}  utils.APIError
 // @Failure      403  {object}  utils.APIError
 // @Failure      500  {object}  utils.APIError
-// @Router       /dashboard/usage/history [get]
+// @Security     SessionAuth
+// @Router       /v1/app/usage/history [get]
 func (h *Handler) GetHistoricalUsageHandler(c fiber.Ctx) error {
 	tenantIDStr := c.Locals("tenant_id")
 	if tenantIDStr == nil {

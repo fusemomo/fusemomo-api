@@ -1,3 +1,25 @@
+// @title           Fusemomo API
+// @version         1.0
+// @description     Behavioral Intelligence for AI Agents that act through APIs.
+// @contact.name    Fusemomo Support
+// @contact.url     https://fusemomo.com
+// @contact.email   team@fusemomo.com
+//
+// @license.name    MIT
+// @license.url     https://opensource.org/licenses/MIT
+//
+// @host            https://api.fusemomo.com
+// @BasePath        /
+//
+// @securityDefinitions.apikey  ApiKeyAuth
+// @in                          header
+// @name                        Authorization
+// @description                 Bearer token: `Authorization: Bearer fm_live_xxxx`
+//
+// @securityDefinitions.apikey  SessionAuth
+// @in                          cookie
+// @name                        fusemomo_session
+// @description                 HttpOnly session cookie set by POST /auth/session
 package main
 
 import (
@@ -10,6 +32,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	_ "fusemomo-api/cmd/api/docs" // swaggo generated docs
 
 	"github.com/gofiber/contrib/v3/swaggo"
 )

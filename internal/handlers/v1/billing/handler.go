@@ -48,12 +48,13 @@ func (h *BillingHandler) CreateCheckoutHandler(c fiber.Ctx) error {
 		return utils.BadRequest("invalid request body")
 	}
 
-	// Validate against the service's known price map to reject unknown IDs early.
-	if !h.Service.IsValidPriceID(req.PriceID) {
-		return utils.BadRequest("unrecognised price_id")
+	// Map requested plan & interval to an active Stripe Price ID securely
+	priceID, err := h.Service.PriceIDForPlan(req.Plan, req.Interval)
+	if err != nil {
+		return utils.BadRequest(err.Error())
 	}
 
-	checkoutURL, err := h.Service.CreateCheckoutSession(c.Context(), tenantID, req.PriceID)
+	checkoutURL, err := h.Service.CreateCheckoutSession(c.Context(), tenantID, priceID)
 	if err != nil {
 		slog.Error("billing: create checkout session failed", "tenant_id", tenantID, "err", err)
 		return utils.InternalServerError("could not create checkout session")

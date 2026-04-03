@@ -12,10 +12,11 @@ import (
 
 type BillingHandler struct {
 	Service Service
+	DB      DBPool
 }
 
-func NewBillingHandler(svc Service) *BillingHandler {
-	return &BillingHandler{Service: svc}
+func NewBillingHandler(svc Service, db DBPool) *BillingHandler {
+	return &BillingHandler{Service: svc, DB: db}
 }
 
 // CreateCheckoutHandler godoc
@@ -138,7 +139,7 @@ func (h *BillingHandler) GetBillingStatusHandler(c fiber.Ctx) error {
 // @Failure      500
 // @Router       /v1/webhooks/stripe [post]
 func (h *BillingHandler) HandleStripeWebhook(c fiber.Ctx) error {
-	return StripeWebhookHandler(c, h.Service)
+	return StripeWebhookHandler(c, h.Service, h.DB)
 }
 
 // getTenantID extracts the tenant UUID set by the session middleware.

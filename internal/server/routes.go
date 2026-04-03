@@ -37,7 +37,7 @@ func (s *FiberServer) registerAPIv1Routes(h *v1.Handler) {
 	stripe.Key = utils.GetEnv("STRIPE_SECRET_KEY", "")
 
 	rh := recommendation.NewHandler(s.DB)
-	bh := billing.NewBillingHandler(billing.NewService(s.DB))
+	bh := billing.NewBillingHandler(billing.NewService(s.DB), s.DB)
 	rl := s.RateLimiter
 
 	apiV1.Post("/webhooks/stripe", bh.HandleStripeWebhook)

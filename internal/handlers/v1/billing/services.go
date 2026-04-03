@@ -38,6 +38,8 @@ type Service interface {
 	// PlanFromPriceID resolves a Stripe price ID to a plan name.
 	// Returns (plan, true) on match, ("", false) when price is unknown.
 	PlanFromPriceID(priceID string) (PlanName, bool)
+	// PriceIDForPlan maps a semantic plan and interval to an active Stripe price ID.
+	PriceIDForPlan(plan string, interval string) (string, error)
 	// NotifyPaymentFailed is called when Stripe reports a failed invoice payment.
 	// Logs a structured alert for operator monitoring. Future: send email.
 	NotifyPaymentFailed(ctx context.Context, stripeCustomerID string, attemptCount int64) error
@@ -102,6 +104,28 @@ func (s *billingService) NotifyPaymentFailed(ctx context.Context, stripeCustomer
 	return nil
 }
 
+// PriceIDForPlan resolves a string plan and interval into the exact Stripe Price ID configured.
+func (s *billingService) PriceIDForPlan(plan string, interval string) (string, error) {
+	if plan != string(PlanBuilder) {
+		return "", fmt.Errorf("unsupported plan configured for self-serve checkout: %s", plan)
+	}
+
+	var priceID string
+	if interval == "monthly" {
+		priceID = utils.GetEnv("STRIPE_PRICE_BUILDER_MONTHLY", "")
+	} else if interval == "yearly" {
+		priceID = utils.GetEnv("STRIPE_PRICE_BUILDER_YEARLY", "")
+	} else {
+		return "", fmt.Errorf("invalid billing interval: %s", interval)
+	}
+
+	if priceID == "" {
+		return "", fmt.Errorf("pricing is not configured on the server")
+	}
+
+	return priceID, nil
+}
+
 // GetStatus returns the current billing state for a tenant.
 func (s *billingService) GetStatus(ctx context.Context, tenantID uuid.UUID) (*models.BillingStatusResponse, error) {
 	var plan string
@@ -156,6 +180,21 @@ func (s *billingService) CreateCheckoutSession(ctx context.Context, tenantID uui
 
 	sess, err := checkoutsession.New(params)
 	if err != nil {
+		// Recovery mechanism: if the test customer was hard-deleted in the Stripe dashboard,
+		// Stripe returns a 'resource_missing' error for the 'customer' param.
+		// We wipe our local reference and retry to automatically self-heal.
+		if stripeErr, ok := err.(*stripe.Error); ok && string(stripeErr.Code) == "resource_missing" && stripeErr.Param == "customer" {
+			slog.Warn("billing: stripe customer missing from Stripe, clearing local db and retrying", "tenant_id", tenantID)
+
+			_, dbErr := s.db.Exec(ctx, "UPDATE tenants SET stripe_customer_id = NULL WHERE id = $1", tenantID.String())
+			if dbErr != nil {
+				return "", fmt.Errorf("stripe checkout session recovery failed: %w", dbErr)
+			}
+
+			// Retry exactly once (ensureStripeCustomer will now generate a fresh customer).
+			return s.CreateCheckoutSession(ctx, tenantID, priceID)
+		}
+
 		return "", fmt.Errorf("stripe checkout session: %w", err)
 	}
 	return sess.URL, nil

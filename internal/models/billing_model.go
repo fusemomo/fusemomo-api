@@ -2,7 +2,8 @@ package models
 
 // CheckoutRequest is sent by the frontend when the user clicks Subscribe.
 type CheckoutRequest struct {
-	PriceID string `json:"price_id" validate:"required"`
+	Plan     string `json:"plan" validate:"required"`
+	Interval string `json:"interval" validate:"required,oneof=monthly yearly"`
 }
 
 // CheckoutResponse is returned to the frontend with the Stripe-hosted checkout URL.

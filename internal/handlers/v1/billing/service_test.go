@@ -52,6 +52,11 @@ func (m *mockService) PlanFromPriceID(priceID string) (PlanName, bool) {
 	return args.Get(0).(PlanName), args.Bool(1)
 }
 
+func (m *mockService) PriceIDForPlan(plan string, interval string) (string, error) {
+	args := m.Called(plan, interval)
+	return args.String(0), args.Error(1)
+}
+
 func (m *mockService) NotifyPaymentFailed(ctx context.Context, stripeCustomerID string, attemptCount int64) error {
 	return m.Called(ctx, stripeCustomerID, attemptCount).Error(0)
 }

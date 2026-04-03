@@ -47,7 +47,18 @@ func (m *mockDBPool) Exec(_ context.Context, _ string, _ ...any) (pgconn.Command
 	// Simulate INSERT ... ON CONFLICT DO NOTHING claiming the row (1 row affected).
 	return pgconn.NewCommandTag("INSERT 0 1"), nil
 }
-func (m *mockDBPool) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row { return nil }
+type mockRow struct{}
+
+func (m mockRow) Scan(dest ...any) error {
+	if len(dest) > 0 {
+		if s, ok := dest[0].(*string); ok {
+			*s = "00000000-0000-0000-0000-000000000000"
+		}
+	}
+	return nil
+}
+
+func (m *mockDBPool) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row { return mockRow{} }
 func (m *mockDBPool) Begin(_ context.Context) (pgx.Tx, error)               { return nil, nil }
 
 // setupApp returns a Fiber app with a single POST /webhook route wired to the
@@ -139,6 +150,7 @@ func TestWebhook_CheckoutCompleted_CallsApplyPlanBuilder(t *testing.T) {
 	t.Setenv("STRIPE_WEBHOOK_SECRET", testWebhookSecret)
 
 	svc := &mockService{}
+	svc.On("PlanFromPriceID", mock.Anything).Return(PlanBuilder, true)
 	svc.On("ApplyPlan", mock.Anything, "cus_test123", "sub_test456", PlanBuilder).Return(nil)
 
 	app := setupApp(svc)
@@ -174,6 +186,8 @@ func TestWebhook_PaymentFailed_Returns200_NoPlanChange(t *testing.T) {
 	t.Setenv("STRIPE_WEBHOOK_SECRET", testWebhookSecret)
 
 	svc := &mockService{}
+	svc.On("NotifyPaymentFailed", mock.Anything, "cus_failed777", mock.AnythingOfType("int64")).Return(nil)
+
 	app := setupApp(svc)
 	body, sig := signPayload(t, paymentFailedEvent("cus_failed777"))
 
@@ -211,6 +225,7 @@ func TestWebhook_CheckoutCompleted_Idempotent(t *testing.T) {
 	t.Setenv("STRIPE_WEBHOOK_SECRET", testWebhookSecret)
 
 	svc := &mockService{}
+	svc.On("PlanFromPriceID", mock.Anything).Return(PlanBuilder, true)
 	svc.On("ApplyPlan", mock.Anything, "cus_idem", "sub_idem", PlanBuilder).Return(nil)
 
 	app := setupApp(svc)

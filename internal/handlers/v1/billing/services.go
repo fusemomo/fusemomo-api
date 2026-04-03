@@ -4,17 +4,27 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"fusemomo-api/internal/models"
 	"fusemomo-api/internal/utils"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stripe/stripe-go/v76"
 	portalsession "github.com/stripe/stripe-go/v76/billingportal/session"
 	checkoutsession "github.com/stripe/stripe-go/v76/checkout/session"
 	"github.com/stripe/stripe-go/v76/customer"
 )
+
+// DBPool is the minimal pgx interface required by the billing package.
+// *pgxpool.Pool satisfies this automatically — no adapter needed.
+type DBPool interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
 
 // Service defines all billing operations. It is an interface so tests can mock it.
 type Service interface {
@@ -25,10 +35,16 @@ type Service interface {
 	ClearPlan(ctx context.Context, stripeCustomerID string) error
 	// IsValidPriceID reports whether the given Stripe price ID is a known plan price.
 	IsValidPriceID(priceID string) bool
+	// PlanFromPriceID resolves a Stripe price ID to a plan name.
+	// Returns (plan, true) on match, ("", false) when price is unknown.
+	PlanFromPriceID(priceID string) (PlanName, bool)
+	// NotifyPaymentFailed is called when Stripe reports a failed invoice payment.
+	// Logs a structured alert for operator monitoring. Future: send email.
+	NotifyPaymentFailed(ctx context.Context, stripeCustomerID string, attemptCount int64) error
 }
 
 type billingService struct {
-	db          *pgxpool.Pool
+	db          DBPool
 	frontendURL string
 	// priceIDToPlan is populated at construction time from env — NOT at package init.
 	priceIDToPlan map[string]PlanName
@@ -36,7 +52,7 @@ type billingService struct {
 
 // NewService constructs a billing service.
 // stripe.Key must be set by the caller (e.g. in server init) before any methods are called.
-func NewService(db *pgxpool.Pool) Service {
+func NewService(db DBPool) Service {
 	monthlyPrice := utils.GetEnv("STRIPE_PRICE_BUILDER_MONTHLY", "")
 	yearlyPrice := utils.GetEnv("STRIPE_PRICE_BUILDER_YEARLY", "")
 	frontendURL := utils.GetEnv("FRONTEND_URL", "https://fusemomo.com")
@@ -59,6 +75,31 @@ func NewService(db *pgxpool.Pool) Service {
 func (s *billingService) IsValidPriceID(priceID string) bool {
 	_, ok := s.priceIDToPlan[priceID]
 	return ok
+}
+
+func (s *billingService) PlanFromPriceID(priceID string) (PlanName, bool) {
+	name, ok := s.priceIDToPlan[priceID]
+	return name, ok
+}
+
+func (s *billingService) NotifyPaymentFailed(ctx context.Context, stripeCustomerID string, attemptCount int64) error {
+	var email, tenantID string
+	if err := s.db.QueryRow(ctx,
+		"SELECT id::text, email FROM tenants WHERE stripe_customer_id = $1 AND deleted_at IS NULL",
+		stripeCustomerID,
+	).Scan(&tenantID, &email); err != nil {
+		return fmt.Errorf("notify payment failed: resolve tenant: %w", err)
+	}
+
+	slog.Warn("billing: payment failed — action required",
+		"tenant_id", tenantID,
+		"email", email,
+		"attempt_count", attemptCount,
+		"alert", "payment_failed_action_required",
+		// Future: trigger transactional email (Resend, Postmark, etc.)
+		// Future: write to notifications table for in-app banner
+	)
+	return nil
 }
 
 // GetStatus returns the current billing state for a tenant.
@@ -88,7 +129,7 @@ func (s *billingService) GetStatus(ctx context.Context, tenantID uuid.UUID) (*mo
 }
 
 // CreateCheckoutSession creates or reuses a Stripe Customer for the tenant, then
-// returns a Stripe-hosted Checkout URL. It uses a DB-level serialisation strategy
+// returns a Stripe-hosted Checkout URL. Uses a transaction-scoped advisory lock
 // to prevent TOCTOU races under concurrent requests.
 func (s *billingService) CreateCheckoutSession(ctx context.Context, tenantID uuid.UUID, priceID string) (string, error) {
 	customerID, err := s.ensureStripeCustomer(ctx, tenantID)
@@ -120,12 +161,13 @@ func (s *billingService) CreateCheckoutSession(ctx context.Context, tenantID uui
 	return sess.URL, nil
 }
 
-// ensureStripeCustomer returns the existing stripe_customer_id for the tenant, or
-// creates a new Stripe Customer and atomically writes it back.
-// Uses a single UPDATE ... WHERE stripe_customer_id IS NULL to prevent concurrent
-// duplicate customer creation (TOCTOU race).
+// ensureStripeCustomer returns the existing stripe_customer_id for the tenant,
+// or creates a new Stripe Customer inside a transaction with a
+// transaction-scoped advisory lock to prevent concurrent duplicate creation.
+// pg_advisory_xact_lock is safe with pgxpool: the lock is tied to the
+// transaction lifetime, not the connection.
 func (s *billingService) ensureStripeCustomer(ctx context.Context, tenantID uuid.UUID) (string, error) {
-	// Fast path: customer already exists.
+	// Fast path — no lock needed if customer already exists.
 	var existingID *string
 	var email string
 	err := s.db.QueryRow(ctx,
@@ -139,7 +181,35 @@ func (s *billingService) ensureStripeCustomer(ctx context.Context, tenantID uuid
 		return *existingID, nil
 	}
 
-	// Slow path: create customer in Stripe.
+	// Slow path — begin a transaction and acquire a transaction-scoped
+	// advisory lock keyed on the tenant UUID.
+	// pg_advisory_xact_lock BLOCKS until the lock is available (no busy-spin,
+	// no sleep) and releases automatically when the transaction ends —
+	// safe with pgxpool regardless of connection assignment.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin tx for customer creation: %w", err)
+	}
+	defer tx.Rollback(ctx) // no-op after Commit
+
+	lockKey := uuidToLockKey(tenantID)
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", lockKey); err != nil {
+		return "", fmt.Errorf("acquire xact advisory lock: %w", err)
+	}
+
+	// Re-read inside the transaction — another request may have created
+	// and written the customer between the fast-path read and lock acquisition.
+	if err := tx.QueryRow(ctx,
+		"SELECT stripe_customer_id FROM tenants WHERE id = $1",
+		tenantID.String(),
+	).Scan(&existingID); err != nil {
+		return "", fmt.Errorf("re-fetch under lock: %w", err)
+	}
+	if existingID != nil && *existingID != "" {
+		return *existingID, nil // another request won the race — use their customer
+	}
+
+	// Create the Stripe customer — exactly once, guaranteed by the lock.
 	params := &stripe.CustomerParams{
 		Params: stripe.Params{Context: ctx},
 		Email:  stripe.String(email),
@@ -151,19 +221,22 @@ func (s *billingService) ensureStripeCustomer(ctx context.Context, tenantID uuid
 		return "", fmt.Errorf("create stripe customer: %w", err)
 	}
 
-	// Atomic write: only update if no other concurrent request already set it.
-	// If a race occurred, we get back the winner's ID and discard ours (orphan in Stripe).
+	// Write — no COALESCE needed, we hold the lock exclusively.
 	var finalID string
-	err = s.db.QueryRow(ctx, `
+	if err = tx.QueryRow(ctx, `
 		UPDATE tenants
-		SET    stripe_customer_id = COALESCE(stripe_customer_id, $1),
+		SET    stripe_customer_id = $1,
 		       updated_at         = NOW()
 		WHERE  id = $2
 		RETURNING stripe_customer_id
-	`, c.ID, tenantID.String()).Scan(&finalID)
-	if err != nil {
+	`, c.ID, tenantID.String()).Scan(&finalID); err != nil {
 		return "", fmt.Errorf("persist stripe customer id: %w", err)
 	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit customer creation: %w", err)
+	}
+
 	return finalID, nil
 }
 
@@ -194,51 +267,49 @@ func (s *billingService) CreatePortalSession(ctx context.Context, tenantID uuid.
 }
 
 // ApplyPlan updates the tenant's plan, subscription ID, and usage limits in the DB.
-// It is idempotent: a no-op if the subscription and plan are already current.
+// Uses a single atomic conditional UPDATE with IS DISTINCT FROM to prevent
+// concurrent retries from executing redundant writes.
 func (s *billingService) ApplyPlan(ctx context.Context, stripeCustomerID, stripeSubscriptionID string, planName PlanName) error {
 	limits, ok := GetPlanLimits(planName)
 	if !ok {
 		return fmt.Errorf("unknown plan: %q", planName)
 	}
 
-	// Idempotency check: skip write if already up to date.
-	var currentSub *string
-	var currentPlan string
-	err := s.db.QueryRow(ctx,
-		"SELECT stripe_subscription_id, plan FROM tenants WHERE stripe_customer_id = $1",
-		stripeCustomerID,
-	).Scan(&currentSub, &currentPlan)
-	if err != nil {
-		return fmt.Errorf("query current plan: %w", err)
-	}
-	if currentSub != nil && *currentSub == stripeSubscriptionID && currentPlan == string(planName) {
-		slog.Info("billing: ApplyPlan skipped (already current)",
-			"customer_id", stripeCustomerID,
-			"plan", planName,
-		)
-		return nil
-	}
-
 	const q = `
 		UPDATE tenants SET
-			plan                     = $1,
-			stripe_subscription_id   = $2,
+			plan                      = $1,
+			stripe_subscription_id    = $2,
 			monthly_resolution_limit  = $3,
 			monthly_interaction_limit = $4,
 			connected_api_limit       = $5,
-			updated_at               = NOW()
+			updated_at                = NOW()
 		WHERE stripe_customer_id = $6
+		  AND (
+		        stripe_subscription_id IS DISTINCT FROM $2
+		        OR plan::text IS DISTINCT FROM $1
+		      )
+		RETURNING id
 	`
-	_, err = s.db.Exec(ctx, q,
+	var returnedID *string
+	err := s.db.QueryRow(ctx, q,
 		string(planName),
 		stripeSubscriptionID,
 		limits.MonthlyResolutionLimit,
 		limits.MonthlyInteractionLimit,
 		limits.ConnectedAPILimit,
 		stripeCustomerID,
-	)
-	if err != nil {
+	).Scan(&returnedID)
+
+	if err != nil && !isNoRows(err) {
 		return fmt.Errorf("apply plan to db: %w", err)
+	}
+	if returnedID == nil {
+		// IS DISTINCT FROM conditions were false — already up to date, skip.
+		slog.Info("billing: ApplyPlan skipped (already current)",
+			"customer_id", stripeCustomerID,
+			"plan", planName,
+		)
+		return nil
 	}
 
 	slog.Info("billing: plan applied",
@@ -276,4 +347,19 @@ func (s *billingService) ClearPlan(ctx context.Context, stripeCustomerID string)
 
 	slog.Info("billing: plan cleared (downgraded to free)", "customer_id", stripeCustomerID)
 	return nil
+}
+
+// isNoRows returns true for pgx "no rows in result set" errors.
+// Used to distinguish "nothing matched the WHERE clause" from real DB errors.
+func isNoRows(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no rows")
+}
+
+// uuidToLockKey converts a UUID to an int64 for PostgreSQL advisory locks.
+// Uses the first 8 bytes of the UUID (big-endian). Consistent across calls
+// for the same UUID — safe as a deterministic lock key.
+func uuidToLockKey(id uuid.UUID) int64 {
+	b := id[:]
+	return int64(b[0])<<56 | int64(b[1])<<48 | int64(b[2])<<40 | int64(b[3])<<32 |
+		int64(b[4])<<24 | int64(b[5])<<16 | int64(b[6])<<8 | int64(b[7])
 }

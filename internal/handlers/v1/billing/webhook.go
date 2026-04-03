@@ -33,7 +33,9 @@ func StripeWebhookHandler(c fiber.Ctx, svc Service, db DBPool) error {
 	signatureHeader := c.Get("Stripe-Signature")
 	webhookSecret := utils.GetEnv("STRIPE_WEBHOOK_SECRET", "")
 
-	event, err := webhook.ConstructEvent(payload, signatureHeader, webhookSecret)
+	event, err := webhook.ConstructEventWithOptions(payload, signatureHeader, webhookSecret, webhook.ConstructEventOptions{
+		IgnoreAPIVersionMismatch: true,
+	})
 	if err != nil {
 		slog.Warn("billing webhook: signature verification failed", "err", err)
 		return c.Status(http.StatusBadRequest).SendString("invalid stripe signature")
@@ -47,9 +49,32 @@ func StripeWebhookHandler(c fiber.Ctx, svc Service, db DBPool) error {
 
 	start := time.Now()
 
-	// Idempotency: claim this event before any processing.
-	// Returns false (not an error) when event was already processed.
-	claimed, err := claimWebhookEvent(ctx, db, event.ID, string(event.Type))
+	// 1. Extract internal Customer ID from the event payload.
+	customerID := extractCustomerIDFromEvent(event)
+	// If it's an unhandled event, just acknowledge it.
+	if customerID == "" {
+		return c.SendStatus(http.StatusOK)
+	}
+
+	// 2. Resolve the matching tenant_id from our database.
+	var tenantID string
+	err = db.QueryRow(ctx, "SELECT id FROM tenants WHERE stripe_customer_id = $1", customerID).Scan(&tenantID)
+	if err != nil {
+		// If no tenant exists for this customer in our DB, we cannot process this.
+		// Return 200 so Stripe stops retrying an impossible event.
+		if err.Error() == "no rows in result set" || err.Error() == "pgx: no rows in result set" {
+			slog.Warn("billing webhook: no tenant found for customer",
+				"event_id", event.ID,
+				"customer_id", customerID,
+			)
+			return c.SendStatus(http.StatusOK)
+		}
+		slog.Error("billing webhook: failed to query tenant by customer", "err", err)
+		return c.Status(http.StatusInternalServerError).SendString("db error looking up tenant")
+	}
+
+	// 3. Idempotency: claim this event before processing, now with a known tenant.
+	claimed, err := claimWebhookEvent(ctx, db, event.ID, string(event.Type), tenantID)
 	if err != nil {
 		slog.Error("billing webhook: idempotency check failed",
 			"event_id", event.ID,
@@ -98,12 +123,12 @@ func StripeWebhookHandler(c fiber.Ctx, svc Service, db DBPool) error {
 // Returns (true, nil)  — event claimed, proceed with processing.
 // Returns (false, nil) — event already processed, skip (duplicate).
 // Returns (false, err) — DB error, return 500 to trigger Stripe retry.
-func claimWebhookEvent(ctx context.Context, db DBPool, eventID, eventType string) (bool, error) {
+func claimWebhookEvent(ctx context.Context, db DBPool, eventID, eventType, tenantID string) (bool, error) {
 	tag, err := db.Exec(ctx, `
-		INSERT INTO stripe_webhook_events (stripe_event_id, event_type)
-		VALUES ($1, $2)
+		INSERT INTO stripe_webhook_events (stripe_event_id, event_type, tenant_id)
+		VALUES ($1, $2, $3)
 		ON CONFLICT (stripe_event_id) DO NOTHING
-	`, eventID, eventType)
+	`, eventID, eventType, tenantID)
 	if err != nil {
 		return false, fmt.Errorf("claim webhook event: %w", err)
 	}
@@ -264,4 +289,26 @@ func extractCheckoutPriceID(sess stripe.CheckoutSession) string {
 		return ""
 	}
 	return sess.LineItems.Data[0].Price.ID
+}
+
+// extractCustomerIDFromEvent extracts the Stripe customer ID early for tenant resolution.
+func extractCustomerIDFromEvent(event stripe.Event) string {
+	switch event.Type {
+	case "checkout.session.completed":
+		var sess stripe.CheckoutSession
+		if err := json.Unmarshal(event.Data.Raw, &sess); err == nil && sess.Customer != nil {
+			return sess.Customer.ID
+		}
+	case "customer.subscription.updated", "customer.subscription.deleted":
+		var sub stripe.Subscription
+		if err := json.Unmarshal(event.Data.Raw, &sub); err == nil && sub.Customer != nil {
+			return sub.Customer.ID
+		}
+	case "invoice.payment_failed":
+		var inv stripe.Invoice
+		if err := json.Unmarshal(event.Data.Raw, &inv); err == nil && inv.Customer != nil {
+			return inv.Customer.ID
+		}
+	}
+	return ""
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"fusemomo-api/internal/models"
 	"fusemomo-api/internal/utils"
@@ -33,6 +34,9 @@ type Service interface {
 	GetStatus(ctx context.Context, tenantID uuid.UUID) (*models.BillingStatusResponse, error)
 	ApplyPlan(ctx context.Context, stripeCustomerID, stripeSubscriptionID string, planName PlanName) error
 	ClearPlan(ctx context.Context, stripeCustomerID string) error
+	// ScheduleCancel records that a subscription will cancel at the given Unix timestamp.
+	// Called when Stripe reports cancel_at_period_end=true on subscription.updated.
+	ScheduleCancel(ctx context.Context, stripeCustomerID string, cancelAt int64) error
 	// IsValidPriceID reports whether the given Stripe price ID is a known plan price.
 	IsValidPriceID(priceID string) bool
 	// PlanFromPriceID resolves a Stripe price ID to a plan name.
@@ -41,7 +45,7 @@ type Service interface {
 	// PriceIDForPlan maps a semantic plan and interval to an active Stripe price ID.
 	PriceIDForPlan(plan string, interval string) (string, error)
 	// NotifyPaymentFailed is called when Stripe reports a failed invoice payment.
-	// Logs a structured alert for operator monitoring. Future: send email.
+	// Writes payment_failed_at to the tenant row and logs a structured alert.
 	NotifyPaymentFailed(ctx context.Context, stripeCustomerID string, attemptCount int64) error
 }
 
@@ -93,6 +97,15 @@ func (s *billingService) NotifyPaymentFailed(ctx context.Context, stripeCustomer
 		return fmt.Errorf("notify payment failed: resolve tenant: %w", err)
 	}
 
+	// Write the failure timestamp so the frontend can show a banner.
+	if _, err := s.db.Exec(ctx,
+		"UPDATE tenants SET payment_failed_at = NOW(), updated_at = NOW() WHERE stripe_customer_id = $1",
+		stripeCustomerID,
+	); err != nil {
+		// Non-fatal — log and continue. The warning below still fires.
+		slog.Error("billing: failed to write payment_failed_at", "tenant_id", tenantID, "err", err)
+	}
+
 	slog.Warn("billing: payment failed — action required",
 		"tenant_id", tenantID,
 		"email", email,
@@ -100,6 +113,28 @@ func (s *billingService) NotifyPaymentFailed(ctx context.Context, stripeCustomer
 		"alert", "payment_failed_action_required",
 		// Future: trigger transactional email (Resend, Postmark, etc.)
 		// Future: write to notifications table for in-app banner
+	)
+	return nil
+}
+
+// ScheduleCancel records that a subscription is cancelling at period end.
+// Sets subscription_cancel_at so the frontend can warn the user, and clears
+// payment_failed_at (a cancelling subscription means billing is resolved).
+func (s *billingService) ScheduleCancel(ctx context.Context, stripeCustomerID string, cancelAt int64) error {
+	cancelTime := time.Unix(cancelAt, 0).UTC()
+	_, err := s.db.Exec(ctx, `
+		UPDATE tenants
+		SET subscription_cancel_at = $1,
+		    payment_failed_at      = NULL,
+		    updated_at             = NOW()
+		WHERE stripe_customer_id = $2
+	`, cancelTime, stripeCustomerID)
+	if err != nil {
+		return fmt.Errorf("schedule cancel: %w", err)
+	}
+	slog.Info("billing: subscription cancellation scheduled",
+		"customer_id", stripeCustomerID,
+		"cancel_at", cancelTime,
 	)
 	return nil
 }
@@ -131,14 +166,20 @@ func (s *billingService) GetStatus(ctx context.Context, tenantID uuid.UUID) (*mo
 	var plan string
 	var subID *string
 	var resLimit, intLimit, apiLimit int
+	var cancelAt *time.Time
+	var paymentFailedAt *time.Time
 
 	const q = `
 		SELECT plan, stripe_subscription_id,
-		       monthly_resolution_limit, monthly_interaction_limit, connected_api_limit
+		       monthly_resolution_limit, monthly_interaction_limit, connected_api_limit,
+		       subscription_cancel_at, payment_failed_at
 		FROM tenants
 		WHERE id = $1 AND deleted_at IS NULL
 	`
-	err := s.db.QueryRow(ctx, q, tenantID.String()).Scan(&plan, &subID, &resLimit, &intLimit, &apiLimit)
+	err := s.db.QueryRow(ctx, q, tenantID.String()).Scan(
+		&plan, &subID, &resLimit, &intLimit, &apiLimit,
+		&cancelAt, &paymentFailedAt,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("query billing status: %w", err)
 	}
@@ -149,6 +190,8 @@ func (s *billingService) GetStatus(ctx context.Context, tenantID uuid.UUID) (*mo
 		MonthlyResolutionLimit:  resLimit,
 		MonthlyInteractionLimit: intLimit,
 		ConnectedAPILimit:       apiLimit,
+		CancelAt:                cancelAt,
+		PaymentFailed:           paymentFailedAt != nil,
 	}, nil
 }
 
@@ -308,6 +351,7 @@ func (s *billingService) CreatePortalSession(ctx context.Context, tenantID uuid.
 // ApplyPlan updates the tenant's plan, subscription ID, and usage limits in the DB.
 // Uses a single atomic conditional UPDATE with IS DISTINCT FROM to prevent
 // concurrent retries from executing redundant writes.
+// Also clears subscription_cancel_at (reactivation) and payment_failed_at (payment recovered).
 func (s *billingService) ApplyPlan(ctx context.Context, stripeCustomerID, stripeSubscriptionID string, planName PlanName) error {
 	limits, ok := GetPlanLimits(planName)
 	if !ok {
@@ -321,6 +365,8 @@ func (s *billingService) ApplyPlan(ctx context.Context, stripeCustomerID, stripe
 			monthly_resolution_limit  = $3,
 			monthly_interaction_limit = $4,
 			connected_api_limit       = $5,
+			subscription_cancel_at    = NULL,
+			payment_failed_at         = NULL,
 			updated_at                = NOW()
 		WHERE stripe_customer_id = $6
 		  AND (
@@ -360,13 +406,16 @@ func (s *billingService) ApplyPlan(ctx context.Context, stripeCustomerID, stripe
 }
 
 // ClearPlan resets the tenant back to the free plan on subscription cancellation.
+// Clears subscription_cancel_at and payment_failed_at as all billing state is now resolved.
 func (s *billingService) ClearPlan(ctx context.Context, stripeCustomerID string) error {
 	limits, _ := GetPlanLimits(PlanFree)
 
 	const q = `
 		UPDATE tenants SET
-			plan                     = $1,
-			stripe_subscription_id   = NULL,
+			plan                      = $1,
+			stripe_subscription_id    = NULL,
+			subscription_cancel_at    = NULL,
+			payment_failed_at         = NULL,
 			monthly_resolution_limit  = $2,
 			monthly_interaction_limit = $3,
 			connected_api_limit       = $4,

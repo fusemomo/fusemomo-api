@@ -202,8 +202,20 @@ func handleWebhookEvent(ctx context.Context, event stripe.Event, svc Service) er
 		}
 
 		customerID := sub.Customer.ID
-		priceID := sub.Items.Data[0].Price.ID
 
+		// User cancelled via the Portal — subscription stays active until period end.
+		// Write the cancel date so the frontend can warn the user.
+		if sub.CancelAtPeriodEnd && sub.CancelAt > 0 {
+			slog.Info("billing webhook: subscription cancellation scheduled",
+				"customer_id", customerID,
+				"cancel_at", sub.CancelAt,
+			)
+			return svc.ScheduleCancel(ctx, customerID, sub.CancelAt)
+		}
+
+		// User reactivated a previously-cancelled subscription, or plan changed.
+		// Resolve the plan from the price and apply it (also clears cancel / payment_failed columns).
+		priceID := sub.Items.Data[0].Price.ID
 		planName, ok := svc.PlanFromPriceID(priceID)
 		if !ok {
 			slog.Warn("billing webhook: subscription updated with unknown price",
@@ -216,6 +228,7 @@ func handleWebhookEvent(ctx context.Context, event stripe.Event, svc Service) er
 		slog.Info("billing webhook: subscription updated",
 			"customer_id", customerID,
 			"plan", planName,
+			"cancel_at_period_end", sub.CancelAtPeriodEnd,
 		)
 		return svc.ApplyPlan(ctx, customerID, sub.ID, planName)
 
@@ -252,9 +265,43 @@ func handleWebhookEvent(ctx context.Context, event stripe.Event, svc Service) er
 
 		// Do NOT downgrade here — Stripe Smart Retries handles recovery.
 		// If all retries exhaust, customer.subscription.deleted fires and
-		// ClearPlan runs. NotifyPaymentFailed gives operators/users a warning.
+		// ClearPlan runs. NotifyPaymentFailed writes payment_failed_at for the in-app banner.
 		_ = svc.NotifyPaymentFailed(ctx, inv.Customer.ID, inv.AttemptCount)
 		return nil
+
+	//  invoice.payment_succeeded
+	// Fires when a retry succeeds after a previous failure, or on the first
+	// successful payment. Clears payment_failed_at so the in-app banner disappears.
+	case "invoice.payment_succeeded":
+		var inv stripe.Invoice
+		if err := json.Unmarshal(event.Data.Raw, &inv); err != nil {
+			slog.Error("billing webhook: unmarshal invoice.payment_succeeded", "err", err)
+			return nil
+		}
+		if inv.Subscription == nil || inv.Customer == nil {
+			return nil
+		}
+		// Determine plan from subscription price — needed for ApplyPlan which clears payment_failed_at.
+		priceID := ""
+		for _, line := range inv.Lines.Data {
+			if line.Price != nil {
+				priceID = line.Price.ID
+				break
+			}
+		}
+		planName, ok := svc.PlanFromPriceID(priceID)
+		if !ok {
+			// Price unknown — can't call ApplyPlan; clear payment_failed_at directly via ScheduleCancel trick.
+			// This is a no-op path: checkout.session.completed already fired for initial payments.
+			slog.Info("billing webhook: payment_succeeded with unknown price — skipping plan apply",
+				"customer_id", inv.Customer.ID)
+			return nil
+		}
+		slog.Info("billing webhook: payment succeeded — clearing payment failure flag",
+			"customer_id", inv.Customer.ID,
+		)
+		// ApplyPlan always clears payment_failed_at (and subscription_cancel_at if reactivated).
+		return svc.ApplyPlan(ctx, inv.Customer.ID, inv.Subscription.ID, planName)
 
 	default:
 		// Unhandled event — acknowledge so Stripe marks it delivered.
@@ -304,7 +351,7 @@ func extractCustomerIDFromEvent(event stripe.Event) string {
 		if err := json.Unmarshal(event.Data.Raw, &sub); err == nil && sub.Customer != nil {
 			return sub.Customer.ID
 		}
-	case "invoice.payment_failed":
+	case "invoice.payment_failed", "invoice.payment_succeeded":
 		var inv stripe.Invoice
 		if err := json.Unmarshal(event.Data.Raw, &inv); err == nil && inv.Customer != nil {
 			return inv.Customer.ID

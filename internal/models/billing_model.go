@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // CheckoutRequest is sent by the frontend when the user clicks Subscribe.
 type CheckoutRequest struct {
 	Plan     string `json:"plan" validate:"required"`
@@ -23,4 +25,8 @@ type BillingStatusResponse struct {
 	MonthlyResolutionLimit  int    `json:"monthly_resolution_limit"`
 	MonthlyInteractionLimit int    `json:"monthly_interaction_limit"`
 	ConnectedAPILimit       int    `json:"connected_api_limit"`
+	// CancelAt is set when the user has cancelled but still has access until period end.
+	CancelAt *time.Time `json:"cancel_at,omitempty"`
+	// PaymentFailed is true when the last invoice payment failed and Stripe is retrying.
+	PaymentFailed bool `json:"payment_failed"`
 }

@@ -43,6 +43,10 @@ func (m *mockService) ClearPlan(ctx context.Context, stripeCustomerID string) er
 	return m.Called(ctx, stripeCustomerID).Error(0)
 }
 
+func (m *mockService) ScheduleCancel(ctx context.Context, stripeCustomerID string, cancelAt int64) error {
+	return m.Called(ctx, stripeCustomerID, cancelAt).Error(0)
+}
+
 func (m *mockService) IsValidPriceID(priceID string) bool {
 	return m.Called(priceID).Bool(0)
 }

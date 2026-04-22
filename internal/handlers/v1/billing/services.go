@@ -27,6 +27,15 @@ type DBPool interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
+// SessionSyncer is implemented by *session.Store. Defined here as an interface
+// so the billing package does not import the session package (avoiding any future
+// circular dependency). When a billing webhook changes a tenant's plan, billing
+// calls UpdatePlan so active in-memory sessions reflect the change immediately
+// without requiring the user to re-login.
+type SessionSyncer interface {
+	UpdatePlan(tenantID, plan string)
+}
+
 // Service defines all billing operations. It is an interface so tests can mock it.
 type Service interface {
 	CreateCheckoutSession(ctx context.Context, tenantID uuid.UUID, priceID string) (string, error)
@@ -50,15 +59,30 @@ type Service interface {
 }
 
 type billingService struct {
-	db          DBPool
-	frontendURL string
+	db            DBPool
+	frontendURL   string
 	// priceIDToPlan is populated at construction time from env — NOT at package init.
 	priceIDToPlan map[string]PlanName
+	// sessions is optional. When non-nil, plan changes are pushed to active sessions
+	// immediately after the DB write so users see the new plan without re-logging in.
+	sessions      SessionSyncer
 }
 
-// NewService constructs a billing service.
+// NewService constructs a billing service without session syncing.
 // stripe.Key must be set by the caller (e.g. in server init) before any methods are called.
+// Use NewServiceWithSessions in production so plan changes propagate to live sessions.
 func NewService(db DBPool) Service {
+	return newService(db, nil)
+}
+
+// NewServiceWithSessions constructs a billing service that propagates plan changes
+// to the in-memory session store immediately after every DB write.
+// This eliminates the "stale plan" window that would otherwise last until re-login.
+func NewServiceWithSessions(db DBPool, sessions SessionSyncer) Service {
+	return newService(db, sessions)
+}
+
+func newService(db DBPool, sessions SessionSyncer) Service {
 	monthlyPrice := utils.GetEnv("STRIPE_PRICE_BUILDER_MONTHLY", "")
 	yearlyPrice := utils.GetEnv("STRIPE_PRICE_BUILDER_YEARLY", "")
 	frontendURL := utils.GetEnv("FRONTEND_URL", "https://fusemomo.com")
@@ -75,6 +99,7 @@ func NewService(db DBPool) Service {
 		db:            db,
 		frontendURL:   frontendURL,
 		priceIDToPlan: priceMap,
+		sessions:      sessions,
 	}
 }
 
@@ -397,10 +422,20 @@ func (s *billingService) ApplyPlan(ctx context.Context, stripeCustomerID, stripe
 		return nil
 	}
 
+	// Propagate plan change to any live in-memory sessions owned by this tenant.
+	// returnedID already holds the tenant UUID from the RETURNING clause — no extra DB call.
+	if s.sessions != nil && returnedID != nil {
+		s.sessions.UpdatePlan(*returnedID, string(planName))
+	}
+
 	slog.Info("billing: plan applied",
 		"customer_id", stripeCustomerID,
 		"subscription_id", stripeSubscriptionID,
 		"plan", planName,
+		"tenant_id", func() string {
+			if returnedID != nil { return *returnedID }
+			return ""
+		}(),
 	)
 	return nil
 }
@@ -419,21 +454,31 @@ func (s *billingService) ClearPlan(ctx context.Context, stripeCustomerID string)
 			monthly_resolution_limit  = $2,
 			monthly_interaction_limit = $3,
 			connected_api_limit       = $4,
-			updated_at               = NOW()
+			updated_at                = NOW()
 		WHERE stripe_customer_id = $5
+		RETURNING id::text
 	`
-	_, err := s.db.Exec(ctx, q,
+	var tenantID string
+	err := s.db.QueryRow(ctx, q,
 		string(PlanFree),
 		limits.MonthlyResolutionLimit,
 		limits.MonthlyInteractionLimit,
 		limits.ConnectedAPILimit,
 		stripeCustomerID,
-	)
-	if err != nil {
+	).Scan(&tenantID)
+	if err != nil && !isNoRows(err) {
 		return fmt.Errorf("clear plan in db: %w", err)
 	}
 
-	slog.Info("billing: plan cleared (downgraded to free)", "customer_id", stripeCustomerID)
+	// Propagate downgrade to any live in-memory sessions immediately.
+	if s.sessions != nil && tenantID != "" {
+		s.sessions.UpdatePlan(tenantID, string(PlanFree))
+	}
+
+	slog.Info("billing: plan cleared (downgraded to free)",
+		"customer_id", stripeCustomerID,
+		"tenant_id", tenantID,
+	)
 	return nil
 }
 

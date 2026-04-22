@@ -103,6 +103,21 @@ func (s *Store) purgeExpired() {
 	s.mu.Unlock()
 }
 
+// UpdatePlan immediately refreshes the plan field in every active session owned
+// by tenantID. The billing service calls this after writing a plan change to the
+// database so that live sessions reflect the upgrade or downgrade without
+// requiring a re-login (avoids a 24-hour stale-plan window).
+func (s *Store) UpdatePlan(tenantID, plan string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, sess := range s.sessions {
+		if sess.TenantID == tenantID {
+			sess.Plan = plan
+			s.sessions[id] = sess
+		}
+	}
+}
+
 // generateID returns a 32-byte hex-encoded cryptographically random ID.
 func generateID() (string, error) {
 	b := make([]byte, 32)

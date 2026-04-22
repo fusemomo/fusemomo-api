@@ -1,8 +1,6 @@
 package recommendation
 
 import (
-	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -48,7 +46,7 @@ func NewHandler(db *pgxpool.Pool) *Handler {
 // @Failure      500 {object} utils.APIError
 // @Router       /v1/core/entities/{entity_id}/recommend [post]
 func (h *Handler) RecommendHandler(c fiber.Ctx) error {
-	tenantID, err := extractTenantID(c)
+	tenantID, err := utils.TenantIDFromCtx(c)
 	if err != nil {
 		return err
 	}
@@ -75,24 +73,16 @@ func (h *Handler) RecommendHandler(c fiber.Ctx) error {
 	ctx := c.Context()
 
 	// Plan gate — L3 requires builder or enterprise.
-	plan, err := h.fetchPlan(c.Context(), tenantID)
-	if err != nil {
-		return err
-	}
-	if plan == "free" {
-		return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
-			"error":         "plan_upgrade_required",
-			"message":       "L3 Recommendations require a Builder plan. Upgrade to access behavioral intelligence.",
-			"current_plan":  "free",
-			"required_plan": "builder",
-			"upgrade_url":   "https://app.fusemomo.com/upgrade",
-		})
+	// utils.PlanFromCtx reads from c.Locals (set by auth middleware) — no extra DB call.
+	plan := utils.PlanFromCtx(c)
+	if utils.RequirePlan(c, utils.PlanBuilder) {
+		return nil
 	}
 
 	// Resolve plan-based default lookback when caller omits the field.
 	if req.LookbackDays == 0 {
 		switch plan {
-		case "enterprise":
+		case utils.PlanEnterprise:
 			req.LookbackDays = 730
 		default: // builder
 			req.LookbackDays = 90
@@ -151,7 +141,7 @@ func (h *Handler) RecommendHandler(c fiber.Ctx) error {
 // @Failure      500 {object} utils.APIError
 // @Router       /v1/core/recommends/{id}/feedback [patch]
 func (h *Handler) FeedbackHandler(c fiber.Ctx) error {
-	tenantID, err := extractTenantID(c)
+	tenantID, err := utils.TenantIDFromCtx(c)
 	if err != nil {
 		return err
 	}
@@ -174,19 +164,9 @@ func (h *Handler) FeedbackHandler(c fiber.Ctx) error {
 
 	ctx := c.Context()
 
-	// Plan gate.
-	plan, err := h.fetchPlan(c.Context(), tenantID)
-	if err != nil {
-		return err
-	}
-	if plan == "free" {
-		return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{
-			"error":         "plan_upgrade_required",
-			"message":       "Recommendation feedback requires a Builder plan",
-			"current_plan":  "free",
-			"required_plan": "builder",
-			"upgrade_url":   "https://app.fusemomo.com/upgrade",
-		})
+	// Plan gate — reads plan from c.Locals (no extra DB call).
+	if utils.RequirePlan(c, utils.PlanBuilder) {
+		return nil
 	}
 
 	// Verify recommendation ownership — fetch entity_id at the same time.
@@ -253,28 +233,3 @@ func (h *Handler) FeedbackHandler(c fiber.Ctx) error {
 	})
 }
 
-//  shared helpers
-
-func extractTenantID(c fiber.Ctx) (uuid.UUID, error) {
-	v := c.Locals("tenant_id")
-	if v == nil {
-		return uuid.Nil, utils.Unauthorized("Missing tenant context")
-	}
-	id, err := uuid.Parse(fmt.Sprintf("%v", v))
-	if err != nil {
-		return uuid.Nil, utils.Unauthorized("Invalid tenant ID format")
-	}
-	return id, nil
-}
-
-// fetchPlan returns the tenant's current plan name.
-func (h *Handler) fetchPlan(ctx context.Context, tenantID uuid.UUID) (string, error) {
-	var plan string
-	if err := h.db.QueryRow(ctx,
-		`SELECT plan::text FROM tenants WHERE id = $1 AND deleted_at IS NULL`,
-		tenantID.String(),
-	).Scan(&plan); err != nil {
-		return "", fmt.Errorf("fetchPlan: %w", err)
-	}
-	return plan, nil
-}

@@ -1,8 +1,11 @@
 ## ⚡ What is Fusemomo?
 
+[Demo](https://drive.google.com/file/d/1oxO0S50H1L8WzUhTCFgYvaOe2z4o6Lmy/view?usp=sharing)
+
 AI agents are stateless by default. Every time an agent runs, it usually starts blind, making the same wrong decisions repeatedly. 
 
-Fusemomo is domain-agnostic and solves this by acting as an intelligent prediction layer built explicitly for action-taking agents. It provides three core layers:
+Fusemomo is the behavioral entity graph for action-taking AI agents. It resolves who every entity is across all connected APIs, logs every action outcome, and recommends what works, before your agent acts.
+It provides three core layers:
 
 1. **L1 — Identity Resolution:** Resolves the same entity across every connected API into one canonical record, using both deterministic and probabilistic (trigram similarity) fuzzy matching.
 2. **L2 — Behavioral Graph:** An immutable, append-only log of every action an agent has taken on any entity through any API.
@@ -90,6 +93,8 @@ FuseMomo serves explicit operations via pragmatically versioned endpoints (`/v1`
 - `DELETE /v1/admin/tenants/:id` - Prune tenant profile
 - `GET    /v1/admin/usage/global` - Full macro platform usage metrics
 
+> [!NOTE]
+> other endpoints are include in cmd/docs directory
 ---
 
 ## 🚀 Getting Started
